@@ -29,36 +29,40 @@ unsigned int **countstats_percpu;
 #ifdef MEASURE_TIME
 #define LIBNVMMIO_INIT_TIME(x) struct timespec x = {0}
 
-#define LIBNVMMIO_START_TIME(name, start) \
-{ \
-  if (clock_gettime(CLOCK_REALTIME, &start) == -1) { \
-    handle_error("clock gettime"); \
-  } \
-}
+#define LIBNVMMIO_START_TIME(name, start)              \
+  {                                                    \
+    if (clock_gettime(CLOCK_REALTIME, &start) == -1) { \
+      handle_error("clock gettime");                   \
+    }                                                  \
+  }
 
-#define LIBNVMMIO_END_TIME(name, start) \
-{ \
-  LIBNVMMIO_INIT_TIME(end); \
-  if (clock_gettime(CLOCK_REALTIME, &end) == -1) { \
-    handle_error("clock gettime"); \
-  } \
-  long sec = end.tv_sec - start.tv_sec; \
-  long nsec = end.tv_nsec - start.tv_nsec; \
-  if (start.tv_nsec > end.tv_nsec) { \
-    --sec; nsec += 1000000000; \
-  } \
-  int cpu = sched_getcpu(); \
-  timestats_percpu[name][cpu].tv_sec += sec; \
-  timestats_percpu[name][cpu].tv_nsec += nsec; \
-  countstats_percpu[name][cpu] += 1; \
-}
+#define LIBNVMMIO_END_TIME(name, start)              \
+  {                                                  \
+    LIBNVMMIO_INIT_TIME(end);                        \
+    if (clock_gettime(CLOCK_REALTIME, &end) == -1) { \
+      handle_error("clock gettime");                 \
+    }                                                \
+    long sec = end.tv_sec - start.tv_sec;            \
+    long nsec = end.tv_nsec - start.tv_nsec;         \
+    if (start.tv_nsec > end.tv_nsec) {               \
+      --sec;                                         \
+      nsec += 1000000000;                            \
+    }                                                \
+    int cpu = sched_getcpu();                        \
+    timestats_percpu[name][cpu].tv_sec += sec;       \
+    timestats_percpu[name][cpu].tv_nsec += nsec;     \
+    countstats_percpu[name][cpu] += 1;               \
+  }
 #else
-#define LIBNVMMIO_INIT_TIME(x) {}
-#define LIBNVMMIO_START_TIME(name, start) {}
-#define LIBNVMMIO_END_TIME(name, start) {}
+#define LIBNVMMIO_INIT_TIME(x) \
+  {}
+#define LIBNVMMIO_START_TIME(name, start) \
+  {}
+#define LIBNVMMIO_END_TIME(name, start) \
+  {}
 #endif
 
 void init_timer(void);
 void report_time(void);
 
-#endif //_LIBNVMMIO_STATS_H
+#endif  //_LIBNVMMIO_STATS_H

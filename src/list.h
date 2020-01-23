@@ -31,8 +31,7 @@ static inline void INIT_LIST_HEAD(struct list_head *list) {
 // @ptr:    the &struct list_head pointer.
 // @type:   the type of the struct this is embedded in. * @member: the name of
 // the list_head within the struct.
-#define list_entry(ptr, type, member) \
-  container_of(ptr, type, member)
+#define list_entry(ptr, type, member) container_of(ptr, type, member)
 
 // list_first_entry - get the first element from a list
 // @ptr:    the list head to take the element from.
@@ -49,8 +48,7 @@ static inline void INIT_LIST_HEAD(struct list_head *list) {
 // @member: the name of the list_head within the struct.
 //
 // Note, that list is expected to be not empty.
-#define list_last_entry(ptr, type, member) \
-  list_entry((ptr)->prev, type, member)
+#define list_last_entry(ptr, type, member) list_entry((ptr)->prev, type, member)
 
 // list_next_entry - get the next element in list
 // @pos:    the type * to cursor
@@ -89,7 +87,7 @@ static inline void INIT_LIST_HEAD(struct list_head *list) {
 #define list_for_each_entry_safe(pos, n, head, member)     \
   for (pos = list_first_entry(head, typeof(*pos), member), \
       n = list_next_entry(pos, member);                    \
-      &pos->member != (head); pos = n, n = list_next_entry(n, member))
+       &pos->member != (head); pos = n, n = list_next_entry(n, member))
 
 // list_for_each_entry_safe_reverse - iterate backwards over list safe against
 // removal
@@ -103,15 +101,14 @@ static inline void INIT_LIST_HEAD(struct list_head *list) {
 #define list_for_each_entry_safe_reverse(pos, n, head, member) \
   for (pos = list_last_entry(head, typeof(*pos), member),      \
       n = list_prev_entry(pos, member);                        \
-      &pos->member != (head); pos = n, n = list_prev_entry(n, member))
+       &pos->member != (head); pos = n, n = list_prev_entry(n, member))
 
 // Insert a new entry between two known consecutive entries.
 //
 // This is only for internal list manipulation where we know
 // the prev/next entries already!
 static inline void __list_add(struct list_head *new_node,
-                              struct list_head *prev,
-                              struct list_head *next) {
+                              struct list_head *prev, struct list_head *next) {
   next->prev = new_node;
   new_node->next = next;
   new_node->prev = prev;
@@ -145,8 +142,7 @@ static inline void list_add_tail(struct list_head *new_node,
 //
 // This is only for internal list manipulation where we know
 // the prev/next entries already!
-static inline void __list_del(struct list_head *prev,
-                              struct list_head *next) {
+static inline void __list_del(struct list_head *prev, struct list_head *next) {
   next->prev = prev;
   prev->next = next;
 }

@@ -3,7 +3,7 @@
 
 #ifdef __cplusplus
 extern "C" {
-#endif // __cplusplus
+#endif  // __cplusplus
 
 #include <sys/types.h>
 #include "libnvmmio-rw.h"
@@ -23,6 +23,6 @@ extern char *nvstrchr(const char *s, int c);
 
 #ifdef __cplusplus
 }
-#endif // __cplusplus
+#endif  // __cplusplus
 
-#endif // _LIBNVMMIO_H
+#endif  // _LIBNVMMIO_H

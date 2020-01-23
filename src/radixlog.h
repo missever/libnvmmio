@@ -1,9 +1,9 @@
 #ifndef _LIBNVMMIO_RADIXLOG_H
 #define _LIBNVMMIO_RADIXLOG_H
 
+#include "allocator.h"
 #include "internal.h"
 #include "uma.h"
-#include "allocator.h"
 
 typedef struct log_entry_struct {
   union {
@@ -40,7 +40,8 @@ struct log_entry_struct *get_log_entry(unsigned long address,
 struct log_table_struct *get_log_table(unsigned long address);
 struct log_table_struct *get_next_table(struct log_table_struct *table,
                                         unsigned long *nrpages);
-struct log_table_struct *get_next_table2(struct log_table_struct *table, table_type_t type);
+struct log_table_struct *get_next_table2(struct log_table_struct *table,
+                                         table_type_t type);
 int atomic_increase(int *count);
 
 #endif /* _LIBNVMMIO_RADIXLOG_H */

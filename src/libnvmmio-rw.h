@@ -3,26 +3,28 @@
 
 #ifdef __cplusplus
 extern "C" {
-#endif // __cplusplus
+#endif  // __cplusplus
 
-#include <sys/uio.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
+
+#define O_ATOMIC 01000000000
 
 extern int nvunlink(const char *pathname);
 
-#define creat(filename,mode) nvcreat(filename,mode)
+#define creat(filename, mode) nvcreat(filename, mode)
 extern int nvcreat(const char *filename, mode_t mode);
-#define open(...) nvopen( __VA_ARGS__)
-extern int nvopen(const char* Path, int flags , ...);
+#define open(...) nvopen(__VA_ARGS__)
+extern int nvopen(const char *Path, int flags, ...);
 #define close(fd) nvclose(fd)
 extern int nvclose(int fd);
-#define read(fd,buf,cnt) nvread(fd,buf,cnt)
-extern ssize_t nvread (int fd, void* buf, size_t cnt);
-#define write(fd,buf,cnt) nvwrite(fd,buf,cnt)
-extern ssize_t nvwrite(int fd, const void* buf, size_t cnt);
-#define lseek(fd,offset,whence) nvlseek(fd,offset,whence)
+#define read(fd, buf, cnt) nvread(fd, buf, cnt)
+extern ssize_t nvread(int fd, void *buf, size_t cnt);
+#define write(fd, buf, cnt) nvwrite(fd, buf, cnt)
+extern ssize_t nvwrite(int fd, const void *buf, size_t cnt);
+#define lseek(fd, offset, whence) nvlseek(fd, offset, whence)
 extern off_t nvlseek(int fd, off_t offset, int whence);
-#define truncate(fd,length) nvtruncate(fd,length)
+#define truncate(fd, length) nvtruncate(fd, length)
 extern int nvftruncate(int fd, off_t length);
 #define fsync(fd) nvfsync(fd)
 extern int nvfsync(int fd);
@@ -36,9 +38,11 @@ extern ssize_t nvpwrite(int fd, const void *buf, size_t cnt, off_t offset);
 extern int nvfdatasync(int fd);
 */
 #define preadv(fd, iov, iovcnt, offset) nvpreadv(fd, iov, iovcnt, offset)
-extern ssize_t nvpreadv(int fd, const struct iovec *iov, int iovcnt, off_t offset);
+extern ssize_t nvpreadv(int fd, const struct iovec *iov, int iovcnt,
+                        off_t offset);
 #define pwritev(fd, iov, iovcnt, offset) nvpwritev(fd, iov, iovcnt, offset)
-extern ssize_t nvpwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset);
+extern ssize_t nvpwritev(int fd, const struct iovec *iov, int iovcnt,
+                         off_t offset);
 #define readv(fd, iov, iovcnt) nvreadv(fd, iov, iovcnt)
 extern ssize_t nvreadv(int fd, const struct iovec *iov, int iovcnt);
 #define writev(fd, iov, iovcnt) nvwritev(fd, iov, iovcnt)
@@ -53,8 +57,8 @@ extern int nvstat(const char *pathname, struct stat *statbuf);
 extern int nvunlink(const char *pathname);
 #define rename(oldpath, newpath) nvrename(oldpath, newpath)
 extern int nvrename(const char *oldpath, const char *newpath);
-#define posix_fadvise(fd, offset, len, advice) nvposix_fadvise(fd, offset, len, advice)
-extern int nvposix_fadvise(int fd, off_t offset, off_t len, int advice);
+#define posix_fadvise(fd, offset, len, advice) nvposix_fadvise(fd, offset, len,
+advice) extern int nvposix_fadvise(int fd, off_t offset, off_t len, int advice);
 
 sqlite
 
@@ -75,8 +79,9 @@ extern nvgetpagesize();
 */
 #define fstat(fd, statbuf) nvfstat(fd, statbuf)
 extern int nvfstat(int fd, struct stat *statbuf);
-//#define sync_file_range(fd, offset, nbytes, flags) nvsync_file_range(fd, offset, nbytes, flags)
-//extern int nvsync_file_range(int fd, off64_t offset, off64_t nbytes, unsigned int flags);
+//#define sync_file_range(fd, offset, nbytes, flags) nvsync_file_range(fd,
+//offset, nbytes, flags) extern int nvsync_file_range(int fd, off64_t offset,
+// off64_t nbytes, unsigned int flags);
 #define fallocate(fd, mode, offset, len) nvfallocate(fd, mode, offset, len)
 extern int nvfallocate(int fd, int mode, off_t offset, off_t len);
 #define posix_fallocate(fd, offset, len) nvposix_fallocate(fd, offset, len)
@@ -94,6 +99,6 @@ extern nvlstat();
 
 #ifdef __cplusplus
 }
-#endif // __cplusplus
+#endif  // __cplusplus
 
-#endif // _LIBNVMMIO_IO_H
+#endif  // _LIBNVMMIO_IO_H

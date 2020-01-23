@@ -20,8 +20,8 @@ static inline unsigned long lmd_index(unsigned long address) {
 }
 
 inline unsigned long table_index(log_size_t log_size, unsigned long address) {
-  //unsigned long nr_entries = 1UL << (LMD_SHIFT - LOG_SHIFT(log_size));
-  //return (address >> shift) & (nr_entries - 1);
+  // unsigned long nr_entries = 1UL << (LMD_SHIFT - LOG_SHIFT(log_size));
+  // return (address >> shift) & (nr_entries - 1);
   return (address >> LOG_SHIFT(log_size)) & (NUM_ENTRIES(log_size) - 1);
 }
 
@@ -48,7 +48,7 @@ log_table_t *get_log_table(unsigned long address) {
     lud = alloc_log_table(lgd, index, LUD);
 
     if (!__sync_bool_compare_and_swap(&lgd->entries[index], NULL, lud)) {
-      //free(lud);
+      // free(lud);
       lud = lgd->entries[index];
     }
   }
@@ -61,7 +61,7 @@ log_table_t *get_log_table(unsigned long address) {
     lmd = alloc_log_table(lud, index, LMD);
 
     if (!__sync_bool_compare_and_swap(&lud->entries[index], NULL, lmd)) {
-      //free(lmd);
+      // free(lmd);
       lmd = lud->entries[index];
     }
   }
@@ -74,7 +74,7 @@ log_table_t *get_log_table(unsigned long address) {
     table = alloc_log_table(lmd, index, TABLE);
 
     if (!__sync_bool_compare_and_swap(&lmd->entries[index], NULL, table)) {
-      //free(table);
+      // free(table);
       table = lmd->entries[index];
     }
   }
@@ -89,7 +89,7 @@ log_table_t *__get_next_table(log_table_t *table, unsigned long *nrpages) {
   count = NUM_ENTRIES(table->log_size);
 
   while (*nrpages > 0 && parent != NULL) {
-    for (i = index; i < count && * nrpages > 0; i++) {
+    for (i = index; i<count && * nrpages> 0; i++) {
       if (parent->entries[i]) {
         return parent->entries[i];
       }
@@ -119,7 +119,8 @@ log_table_t *get_next_table2(log_table_t *table, table_type_t type) {
   if (next_table == NULL) {
     next_table = alloc_log_table(parent, index, type);
 
-    if (!__sync_bool_compare_and_swap(&parent->entries[index], NULL, next_table)) {
+    if (!__sync_bool_compare_and_swap(&parent->entries[index], NULL,
+                                      next_table)) {
       free(next_table);
       next_table = parent->entries[index];
     }
@@ -135,6 +136,10 @@ log_table_t *get_next_table(log_table_t *table, unsigned long *nrpages) {
   return ret;
 }
 
+/*
+ * Find and return the table using the virtual address.
+ * If there is no table, NULL is returned.
+ */
 log_table_t *find_log_table(unsigned long address) {
   log_table_t *lud, *lmd, *table;
   unsigned long index;
@@ -143,17 +148,13 @@ log_table_t *find_log_table(unsigned long address) {
   index = lgd_index(address);
   lud = lgd->entries[index];
 
-  if (lud == NULL) {
-    return NULL;
-  }
+  if (lud == NULL) return NULL;
 
   /* LMD */
   index = lud_index(address);
   lmd = lud->entries[index];
 
-  if (lmd == NULL) {
-    return NULL;
-  }
+  if (lmd == NULL) return NULL;
 
   /* Log Table */
   index = lmd_index(address);
@@ -162,34 +163,18 @@ log_table_t *find_log_table(unsigned long address) {
   return table;
 }
 
+/*
+ * Find and return the log entry using the virtual address.
+ * If there is no table, NULL is returned.
+ */
 log_entry_t *find_log_entry(unsigned long address) {
-  log_table_t *lud, *lmd, *table;
+  log_table_t *table;
   log_entry_t *entry;
   unsigned long index;
 
-  /* LUD */
-  index = lgd_index(address);
-  lud = lgd->entries[index];
+  table = find_log_table(address);
 
-  if (lud == NULL) {
-    return NULL;
-  }
-
-  /* LMD */
-  index = lud_index(address);
-  lmd = lud->entries[index];
-
-  if (lmd == NULL) {
-    return NULL;
-  }
-
-  /* Log Table */
-  index = lmd_index(address);
-  table = lmd->entries[index];
-
-  if (table == NULL) {
-    return NULL;
-  }
+  if (table == NULL) return NULL;
 
   index = table_index(table->log_size, address);
   entry = table->entries[index];

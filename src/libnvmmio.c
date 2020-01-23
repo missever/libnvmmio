@@ -1,42 +1,36 @@
 #define _GNU_SOURCE
 
+#include <fcntl.h>
 #include <libpmem.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <stdarg.h>
 
+#include <dirent.h>
+#include <errno.h>
+#include <sys/time.h>
+#include <sys/uio.h>
 #include "allocator.h"
 #include "internal.h"
-//#include "libnvmmio.h"
 #include "list.h"
 #include "stats.h"
-//*******
-#include <errno.h>
-#include <sys/uio.h>
-#include <dirent.h>
-#include <sys/time.h>
+
 #define PATH_SIZE 64
-#define NthM(x) (67108864<< x)
-//*******
-
-#include <sys/resource.h>
-#include <sys/syscall.h>
-
+#define NthM(x) (67108864 << x)
+#define O_ATOMIC 01000000000
 #define _USE_HYBRID_LOGGING
 #define HYBRID_WRITE_RATIO (40)
 #define MIN_FILESIZE (1UL << 26)
-int POSSIBLE_MODE  = S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH;
 
-typedef struct thread_info_struct {
-  pthread_t tid;
-  int id;
-} thread_info_t;
+int POSSIBLE_MODE = S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IWGRP | S_IXGRP |
+                    S_IROTH | S_IWOTH | S_IXOTH;
 
 static bool initialized = false;
 static void *base_mmap_addr = NULL;
@@ -52,12 +46,12 @@ static inline void nvmmio_fence(void) {
   LIBNVMMIO_END_TIME(nvmmio_fence_t, nvmmio_fence_time);
 }
 
-static inline void nvmmio_write(void *dst, const void *src, size_t n,
+static inline void nvmmio_write(void *dest, const void *src, size_t n,
                                 bool fence) {
   LIBNVMMIO_INIT_TIME(nvmmio_write_time);
   LIBNVMMIO_START_TIME(nvmmio_write_t, nvmmio_write_time);
 
-  pmem_memcpy_nodrain(dst, src, n);
+  pmem_memcpy_nodrain(dest, src, n);
 
   if (fence) {
     nvmmio_fence();
@@ -146,17 +140,18 @@ static void sync_uma(uma_t *uma) {
   void *dst, *src;
   int s;
 
-  //printf("%s: %d\n", __func__, id);
-
+  /* Acquire the reader lock of the per-file metadata */
   s = pthread_rwlock_rdlock(uma->rwlockp);
   if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_rwlock_rdlock");
   }
 
+  /* get the necessary information from the per-file metadata */
   address = (unsigned long)(uma->start);
   end = (unsigned long)(uma->end);
   current_epoch = uma->epoch;
 
+  /* Release the reader lock of the per-file metadata */
   s = pthread_rwlock_unlock(uma->rwlockp);
   if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_rwlock_unlock");
@@ -169,24 +164,21 @@ static void sync_uma(uma_t *uma) {
       log_size = table->log_size;
       nrlogs = NUM_ENTRIES(log_size);
 
-      for (i=nrlogs-1; i>0; i--) {
+      for (i = nrlogs - 1; i > 0; i--) {
         entry = table->entries[i];
 
         if (entry && entry->epoch < current_epoch) {
-          /* lock the entry */
-          if (pthread_rwlock_trywrlock(entry->rwlockp) != 0)
-            continue;
+          /* Acquire the writer lock of the log entry */
+          if (pthread_rwlock_trywrlock(entry->rwlockp) != 0) continue;
 
-          /* sync the entry */
+          /* Committed log entry */
           if (entry->epoch < current_epoch) {
-
             if (entry->policy == REDO) {
               dst = entry->dst + entry->offset;
               src = entry->data + entry->offset;
 
-              nvmmio_write(dst, src, entry->len, false);
+              nvmmio_write(dst, src, entry->len, true);
             }
-            nvmmio_fence();
             table->entries[i] = NULL;
 
             free_log_entry(entry, log_size, false);
@@ -194,7 +186,7 @@ static void sync_uma(uma_t *uma) {
             continue;
           }
 
-          /* unlock the entry */
+          /* Release the writer lock of the log entry */
           s = pthread_rwlock_unlock(entry->rwlockp);
           if (__glibc_unlikely(s != 0)) {
             handle_error("pthread_rwlock_unlock");
@@ -220,15 +212,9 @@ void init_libnvmmio(void) {
     init_radixlog();
     init_uma();
     init_base_address();
-    //init_syncthreads();
 
     atexit(cleanup_handler);
   }
-#if 0
-  pid_t tid = syscall(SYS_gettid);
-  printf("[%lu-%s] priority=%d\n", pthread_self(), __func__,
-         getpriority(PRIO_PROCESS, tid));
-#endif
 }
 
 static inline void *get_base_mmap_addr(void *addr, size_t n) {
@@ -255,7 +241,6 @@ static inline bool filter_addr(const void *address) {
   return result;
 }
 
-#if 1
 static void close_sync_thread(uma_t *uma) {
   int s;
   s = pthread_cancel(uma->sync_thread);
@@ -266,40 +251,25 @@ static void close_sync_thread(uma_t *uma) {
 
 static void *sync_thread_func(void *parm) {
   uma_t *uma;
-
   uma = (uma_t *)parm;
 
   printf("[%s] %d uma thread start on %d\n", __func__, uma->id, sched_getcpu());
 
   while (TRUE) {
-    //pthread_cond_wait(&sync_thread->cond, &sync_thread->mutex);
     usleep(SYNC_PERIOD);
-    //printf("%d thread wake up!!\n", id);
     sync_uma(uma);
   }
   return NULL;
 }
-#endif
 
-#if 1
 static void create_sync_thread(uma_t *uma) {
   int s;
 
-#if 0
-  s = pthread_cond_init(&sync_thread->cond, NULL);
-  if (s != 0)
-    handle_error("pthread_cond_init");
-
-  s = pthread_mutex_init(&sync_thread->mutex, NULL);
-  if (s != 0)
-    handle_error("pthread_mutex_init");
-#endif
-
   s = pthread_create(&uma->sync_thread, NULL, sync_thread_func, uma);
-  if (__glibc_unlikely(s != 0))
+  if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_create");
+  }
 }
-#endif
 
 void *nvmmap(void *addr, size_t len, int prot, int flags, int fd,
              off_t offset) {
@@ -322,11 +292,13 @@ void *nvmmap(void *addr, size_t len, int prot, int flags, int fd,
     handle_error("mmap");
   }
 
-  if (__glibc_unlikely(fstat(fd, &sb) == -1)) {
+  s = fstat(fd, &sb);
+  if (__glibc_unlikely(s != 0)) {
     handle_error("fstat");
   }
 
   uma = alloc_uma();
+
   s = pthread_rwlock_init(uma->rwlockp, NULL);
   if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_rwlock_init");
@@ -347,9 +319,11 @@ void *nvmmap(void *addr, size_t len, int prot, int flags, int fd,
   if (uma->start < min_addr) {
     min_addr = uma->start;
   }
+
   if (uma->end > max_addr) {
     max_addr = uma->end;
   }
+
   insert_uma_rbtree(uma);
   insert_uma_syncthreads(uma);
 
@@ -378,18 +352,19 @@ int nvmunmap(void *addr, size_t n) {
 }
 
 static int nvmunmap_uma(void *addr, size_t n, uma_t *uma) {
-	if (__glibc_unlikely(uma == NULL)) {
-		handle_error("find_uma() failed");
-	}
+  if (__glibc_unlikely(uma == NULL)) {
+    handle_error("find_uma() failed");
+  }
 
-	if (__glibc_unlikely(uma->start != addr || uma->end != (addr + n))) {
-		handle_error("the uma must be splitted");
-	}
+  if (__glibc_unlikely(uma->start != addr || uma->end != (addr + n))) {
+    handle_error("the uma must be splitted");
+  }
 
-	delete_uma_rbtree(uma);
-	delete_uma_syncthreads(uma);
-	return munmap(addr, n);
+  delete_uma_rbtree(uma);
+  delete_uma_syncthreads(uma);
+  return munmap(addr, n);
 }
+
 static void sync_entry(log_entry_t *entry, uma_t *uma) {
   void *dst, *src;
 
@@ -443,11 +418,9 @@ static inline int check_overwrite(void *req_start, void *req_end,
         return 2;
       else
         return 3;
-    }
-    else
+    } else
       return 1;
-  }
-  else {
+  } else {
     if (req_end <= log_end)
       return 4;
     else {
@@ -468,8 +441,8 @@ static inline void nvmemcpy_memcpy(void *dst, const void *src, size_t n) {
   LIBNVMMIO_END_TIME(nvmemcpy_memcpy_t, nvmemcpy_memcpy_time);
 }
 
-// This function is only called when using redo logging.
-static void nvmemcpy_read_redo(void *dest, const void *src, size_t record_size) {
+static void nvmemcpy_read_redo(void *dest, const void *src,
+                               size_t record_size) {
   log_table_t *table;
   log_entry_t *entry;
   void *req_start, *req_end, *log_start, *log_end, *overwrite_dest;
@@ -497,7 +470,7 @@ static void nvmemcpy_read_redo(void *dest, const void *src, size_t record_size) 
       next_page_addr = (req_addr + LOG_SIZE(log_size)) & LOG_MASK(log_size);
       next_len = next_page_addr - req_addr;
 
-nvmemcpy_read_get_entry:
+    nvmemcpy_read_get_entry:
       entry = table->entries[index];
 
       LIBNVMMIO_INIT_TIME(check_log_time);
@@ -578,7 +551,8 @@ static inline log_size_t set_log_size(size_t record_size) {
   return log_size;
 }
 
-static void nvmemcpy_write(void *dst, const void *src, size_t record_size, uma_t *uma) {
+static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
+                           uma_t *uma) {
   log_entry_t *entry;
   log_table_t *table;
   unsigned long req_addr, next_page_addr, req_offset;
@@ -599,7 +573,7 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size, uma_t
   if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_rwlock_rdlock");
   }
-  
+
   LIBNVMMIO_INIT_TIME(indexing_log_time);
   LIBNVMMIO_START_TIME(indexing_log_t, indexing_log_time);
 
@@ -614,8 +588,7 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size, uma_t
   if (table->count == 0) {
     log_size = set_log_size(record_size);
     table->log_size = log_size;
-  }
-  else {
+  } else {
     log_size = table->log_size;
   }
 
@@ -623,16 +596,8 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size, uma_t
 
   LIBNVMMIO_END_TIME(indexing_log_t, indexing_log_time);
 
-#if 0
-  test_addr = (void *)((unsigned long)dst & LOG_MASK(log_size));
-  if (test_addr != dst)
-    printf("NO aligned addr\n");
-  printf("[%s] %lu, %lu\n", __func__, index, (dst - uma->start) >> LOG_SHIFT(log_size));
-#endif
-
-
   while (n > 0 && table != NULL) {
-nvmemcpy_write_get_entry:
+  nvmemcpy_write_get_entry:
 
     entry = table->entries[index];
 
@@ -654,10 +619,10 @@ nvmemcpy_write_get_entry:
     if (pthread_rwlock_trywrlock(entry->rwlockp) != 0)
       goto nvmemcpy_write_get_entry;
 
-    if (entry->epoch < uma->epoch)
+    if (entry->epoch < uma->epoch) {
       sync_entry(entry, uma);
+    }
 
-    //req_offset = req_addr & (LOG_SIZE(log_size) - 1);
     req_offset = LOG_OFFSET(req_addr, log_size);
     next_page_addr = (req_addr + LOG_SIZE(log_size)) & LOG_MASK(log_size);
 
@@ -675,7 +640,7 @@ nvmemcpy_write_get_entry:
       nvmmio_write(log_start, src, req_len, false);
     }
 
-    if (entry->len > 0) { // overwrite
+    if (entry->len > 0) {  // overwrite
       log_end = log_start + req_len;
       prev_log_start = entry->data + entry->offset;
       prev_log_end = prev_log_start + entry->len;
@@ -711,8 +676,7 @@ nvmemcpy_write_get_entry:
         default:
           handle_error("check overwrite");
       }
-    }
-    else { // no overwrite
+    } else {  // no overwrite
       entry->offset = req_offset;
       entry->len = req_len;
       entry->dst = (void *)(req_addr & PAGE_MASK);
@@ -738,7 +702,6 @@ nvmemcpy_write_get_entry:
   if (uma->policy == UNDO) {
     nvmmio_write(destination, source, record_size, true);
   }
-
 
   s = pthread_rwlock_unlock(uma->rwlockp);
   if (__glibc_unlikely(s != 0)) {
@@ -769,8 +732,7 @@ static size_t nvstrlen_redo(char *start, char *end, bool *next) {
   unsigned long offset;
 
   for (s = start; s < end; ++s) {
-    if (!(*s))
-      break;
+    if (!(*s)) break;
   }
 
   offset = (unsigned long)s & (~PAGE_MASK);
@@ -778,7 +740,7 @@ static size_t nvstrlen_redo(char *start, char *end, bool *next) {
     *next = true;
   else
     *next = false;
-  
+
   return (s - start);
 }
 
@@ -794,7 +756,7 @@ static void get_string_from_redo(char **dst, const char *src) {
   req_addr = (unsigned long)src;
 
   do {
-get_string_from_redo_get_entry:
+  get_string_from_redo_get_entry:
     entry = find_log_entry(req_addr);
 
     if (entry != NULL) {
@@ -814,15 +776,14 @@ get_string_from_redo_get_entry:
             len = n + 1;
           else
             len = n;
-          
+
           *dst = (char *)malloc(len);
           if (*dst == NULL) {
             handle_error("malloc");
           }
 
           memcpy(*dst, req_start, len);
-        }
-        else {
+        } else {
           if (!next)
             len = len + n + 1;
           else
@@ -873,8 +834,7 @@ void *nvmemcpy(void *dst, const void *src, size_t n) {
         if (src_uma->policy == UNDO) {
           memcpy(dst, src, n);
           goto nvmemcpy_out;
-        }
-        else {
+        } else {
           nvmemcpy_read_redo(dst, src, n);
           goto nvmemcpy_out;
         }
@@ -886,17 +846,6 @@ void *nvmemcpy(void *dst, const void *src, size_t n) {
 nvmemcpy_out:
   return dst;
 }
-
-#if 0
-static inline void nvmsync_async(uma_t *uma) {
-  int s;
-
-  s = pthread_cond_signal(&uma->tinfo->cond);
-  if (__glibc_likely(s != 0)) {
-    handle_error("pthread_cond_signal");
-  }
-}
-#endif
 
 static void nvmsync_sync(void *addr, size_t len, unsigned long new_epoch) {
   log_table_t *table;
@@ -921,7 +870,7 @@ static void nvmsync_sync(void *addr, size_t len, unsigned long new_epoch) {
   while (nrpages > 0 && table != NULL) {
     if (table->count > 0) {
       for (i = start; i < end; i++) {
-retry_sync_nvmsync_get_entry:
+      retry_sync_nvmsync_get_entry:
         entry = table->entries[i];
 
         if (entry != NULL && entry->epoch < new_epoch) {
@@ -1051,13 +1000,6 @@ int nvmsync(void *addr, size_t len, int flags) {
   int s, ret;
   bool sync = false;
 
-  /*
-  if (offset_in_page((unsigned long)addr)) {
-    ret = -1;
-    goto nvmsync_out;
-  }
-  */
-
   len = (len + (~PAGE_MASK)) & PAGE_MASK;
   uma = find_uma(addr);
   if (__glibc_unlikely(uma == NULL)) {
@@ -1100,7 +1042,7 @@ int nvmsync(void *addr, size_t len, int flags) {
       flags &= ~MS_ASYNC;
       flags |= MS_SYNC;
       uma->policy = new_policy;
-      
+
       if (new_policy == UNDO)
         printf("[%s] REDO->UNDO\n", __func__);
       else
@@ -1120,108 +1062,12 @@ int nvmsync(void *addr, size_t len, int flags) {
     handle_error("pthread_rwlock_unlock");
   }
 
-  /* Background Thread */
-#if 0
-  if (sync) {
-    if (flags & MS_ASYNC) {
-      s = pthread_cond_signal(&uma->sync_thread->cond);
-      if (__glibc_unlikely(s != 0)) {
-        handle_error("pthread_cond_signal");
-      }
-    }
-  }
-#endif
   ret = 0;
 
 nvmsync_out:
   return ret;
 }
 
-/*
-int nvopen(const char *pathname, int flags, ...) {
-  void *mmap_addr;
-  uma_t *uma;
-  struct stat sb;
-  unsigned long orig_offset, length;
-  mode_t mode = 0;
-  int fd, s;
-
-  if (__glibc_unlikely(!initialized)) {
-    init_libnvmmio();
-  }
-
-  if (flags & O_CREAT) {
-    va_list arg;
-    va_start(arg, flags);
-    mode = va_arg(arg, int);
-    va_end(arg);
-  }
-
-  fd = open(pathname, flags, mode);
-  if (__glibc_unlikely(fd == -1)) {
-    handle_error("open");
-  }
-
-  s = fstat(fd, &sb);
-  if (__glibc_unlikely(s != 0)) {
-    handle_error("fstat");
-  }
-
-  orig_offset = (unsigned long)sb.st_size;
-
-  if (orig_offset < MIN_FILESIZE) {
-    length = MIN_FILESIZE;
-  } else {
-    length = orig_offset;
-  }
-
-  mmap_addr = mmap(get_base_mmap_addr(NULL, length),
-                      (size_t)length,
-                      PROT_READ|PROT_WRITE,
-                      MAP_SHARED|MAP_POPULATE,
-                      fd,
-                      (off_t)0);
-  if (__glibc_unlikely(mmap_addr == MAP_FAILED)) {
-    handle_error("mmap");
-  }
-
-  uma = alloc_uma();
-  s = pthread_rwlock_init(uma->rwlockp, NULL);
-  if (__glibc_unlikely(s != 0)) {
-    handle_error("pthread_rwlock_init");
-  }
-  uma->start = mmap_addr;
-  uma->end = mmap_addr + length;
-  uma->ino = (unsigned long)sb.st_ino;
-  uma->offset = 0;
-  uma->epoch = 1;
-  uma->policy = DEFAULT_POLICY;
-
-  if (uma->start < min_addr) {
-    min_addr = uma->start;
-  }
-  if (uma->end > max_addr) {
-    max_addr = uma->end;
-  }
-  insert_uma_rbtree(uma);
-  insert_uma_syncthreads(uma);
-  insert_uma_fdarray(fd, uma);
-
-  return fd;
-}
-
-
-int nvclose(int fd) {
-  uma_t *uma;
-  uma = get_uma_fdarray(fd);
-
-  delete_uma_rbtree(uma);
-  delete_uma_syncthreads(uma);
-  munmap(uma->start, uma->end - uma->start);
-
-  close(fd);
-}
-*/
 int nvmemcmp(const void *s1, const void *s2, size_t n) {
   uma_t *uma;
   void *s1_ptr, *s2_ptr;
@@ -1238,8 +1084,7 @@ int nvmemcmp(const void *s1, const void *s2, size_t n) {
 
       if (uma->policy == REDO) {
         s1_ptr = malloc(n);
-        if (__glibc_unlikely(s1_ptr == NULL))
-          handle_error("malloc");
+        if (__glibc_unlikely(s1_ptr == NULL)) handle_error("malloc");
 
         nvmemcpy_read_redo(s1_ptr, s1, n);
       }
@@ -1254,8 +1099,7 @@ int nvmemcmp(const void *s1, const void *s2, size_t n) {
 
       if (uma->policy == REDO) {
         s2_ptr = malloc(n);
-        if (__glibc_unlikely(s2_ptr == NULL))
-          handle_error("malloc");
+        if (__glibc_unlikely(s2_ptr == NULL)) handle_error("malloc");
 
         nvmemcpy_read_redo(s2_ptr, s2, n);
       }
@@ -1275,8 +1119,7 @@ void *nvmemset(void *s, int c, size_t n) {
 
     if (uma) {
       buf = malloc(n);
-      if (buf == NULL)
-        handle_error("malloc");
+      if (buf == NULL) handle_error("malloc");
 
       memset(buf, c, n);
       nvmemcpy_write(s, buf, n, uma);
@@ -1303,7 +1146,7 @@ int nvstrcmp(const char *s1, const char *s2) {
 
   if (filter_addr(s1)) {
     uma = find_uma(s1);
-    
+
     if (uma) {
       increase_read_count(uma);
 
@@ -1315,7 +1158,7 @@ int nvstrcmp(const char *s1, const char *s2) {
 
   if (filter_addr(s2)) {
     uma = find_uma(s2);
-    
+
     if (uma) {
       increase_read_count(uma);
 
@@ -1329,741 +1172,739 @@ int nvstrcmp(const char *s1, const char *s2) {
   return ret;
 }
 
-//**************************************************IO semantic************************************************//
-
-typedef struct fd_mapaddr_struct{
-	void *addr;
-	off_t off;
-	char pathname[PATH_SIZE];
-	size_t mapped_size;
-	size_t written_file_size;
-	size_t current_file_size;
-	int dup;
-	int dupfd;
-	int open;
-	int increaseCount;
-	uma_t *fd_uma;
+typedef struct fd_mapaddr_struct {
+  void *addr;
+  off_t off;
+  char pathname[PATH_SIZE];
+  size_t mapped_size;
+  size_t written_file_size;
+  size_t current_file_size;
+  int dup;
+  int dupfd;
+  int open;
+  int increaseCount;
+  uma_t *fd_uma;
 } fd_addr;
 
-static fd_addr fd_table[FD_LIMIT]={0,};
+static fd_addr fd_table[FD_LIMIT] = {
+    0,
+};
 static int fd_indirection[FD_LIMIT] = {0};
 static int lastFd;
 
-static inline void map_fd_addr(int fd, void* addr, off_t fd_size, off_t written_file_size, size_t mapped_size, const char *pathname){
-
-	fd_table[fd].addr = addr;
-	fd_table[fd].off = 0;
-	memcpy(fd_table[fd].pathname, pathname, strlen(pathname));
-	fd_table[fd].mapped_size = mapped_size;
-	fd_table[fd].written_file_size = written_file_size;
-	fd_table[fd].current_file_size = fd_size;
-	fd_table[fd].fd_uma = find_uma(addr);
-	fd_table[fd].dupfd = fd;
-	fd_table[fd].open = 0;
-	fd_table[fd].dup = 0;
-	fd_table[fd].increaseCount = 1;
-	//TODO
-	//getdtablesize() gives the MAX fd a process can have
-	//not many fds, usually 1024.
-	//Just make an array to keep a fd and addr pair
+static inline void map_fd_addr(int fd, void *addr, off_t fd_size,
+                               off_t written_file_size, size_t mapped_size,
+                               const char *pathname) {
+  fd_table[fd].addr = addr;
+  fd_table[fd].off = 0;
+  memcpy(fd_table[fd].pathname, pathname, strlen(pathname));
+  fd_table[fd].mapped_size = mapped_size;
+  fd_table[fd].written_file_size = written_file_size;
+  fd_table[fd].current_file_size = fd_size;
+  fd_table[fd].fd_uma = find_uma(addr);
+  fd_table[fd].dupfd = fd;
+  fd_table[fd].open = 0;
+  fd_table[fd].dup = 0;
+  fd_table[fd].increaseCount = 1;
+  // TODO
+  // getdtablesize() gives the MAX fd a process can have
+  // not many fds, usually 1024.
+  // Just make an array to keep a fd and addr pair
 }
 
-static inline off_t get_fd_off(int fd){
-	if(fd_table[fd].dupfd == fd)
-		return fd_table[fd].off;
-	else
-		return fd_table[fd_indirection[fd]].off;
+static inline off_t get_fd_off(int fd) {
+  if (fd_table[fd].dupfd == fd)
+    return fd_table[fd].off;
+  else
+    return fd_table[fd_indirection[fd]].off;
 }
-static inline void* get_fd_addr_cur(int fd){
-	return fd_table[fd_indirection[fd]].addr + get_fd_off(fd);
-}
-
-static inline void* get_fd_addr_set(int fd, off_t off){
-	return fd_table[fd_indirection[fd]].addr + off;
+static inline void *get_fd_addr_cur(int fd) {
+  return fd_table[fd_indirection[fd]].addr + get_fd_off(fd);
 }
 
-static inline uma_t* get_fd_uma(int fd){
+static inline void *get_fd_addr_set(int fd, off_t off) {
+  return fd_table[fd_indirection[fd]].addr + off;
+}
+
+static inline uma_t *get_fd_uma(int fd) {
   uma_t *uma;
 
   LIBNVMMIO_INIT_TIME(get_fd_uma_time);
   LIBNVMMIO_START_TIME(get_fd_uma_t, get_fd_uma_time);
 
-	uma = fd_table[fd_indirection[fd]].fd_uma;
+  uma = fd_table[fd_indirection[fd]].fd_uma;
 
   LIBNVMMIO_END_TIME(get_fd_uma_t, get_fd_uma_time);
   return uma;
 }
 
-static inline int get_path_fd(const char *pathname){
-	int i=3;
-	for(i=3; i<=lastFd; i++){
-		if(fd_table[fd_indirection[i]].pathname != NULL && fd_table[fd_indirection[i]].pathname != 0 ){
-			if(strcmp(fd_table[fd_indirection[i]].pathname, pathname) == 0)
-				return i;
-		}
-	}
-	return -1;
+static inline int get_path_fd(const char *pathname) {
+  int i = 3;
+  for (i = 3; i <= lastFd; i++) {
+    if (fd_table[fd_indirection[i]].pathname != NULL &&
+        fd_table[fd_indirection[i]].pathname != 0) {
+      if (strcmp(fd_table[fd_indirection[i]].pathname, pathname) == 0) return i;
+    }
+  }
+  return -1;
 }
 
-static inline void trunc_fit_fd(int fd){
-	size_t written_file_size = fd_table[fd_indirection[fd]].written_file_size;
-	size_t current_file_size = fd_table[fd_indirection[fd]].current_file_size;
+static inline void trunc_fit_fd(int fd) {
+  size_t written_file_size = fd_table[fd_indirection[fd]].written_file_size;
+  size_t current_file_size = fd_table[fd_indirection[fd]].current_file_size;
 
-	if(written_file_size < current_file_size){
-		if(ftruncate(fd,written_file_size)<0){
-			printf("[%s]: ftruncate error\n", __func__);
-		}else{
-			fd_table[fd_indirection[fd]].current_file_size = written_file_size;
-		}
-	}
+  if (written_file_size < current_file_size) {
+    if (ftruncate(fd, written_file_size) < 0) {
+      printf("[%s]: ftruncate error\n", __func__);
+    } else {
+      fd_table[fd_indirection[fd]].current_file_size = written_file_size;
+    }
+  }
 }
 
-static inline size_t trunc_expand_fd(int fd, size_t current_file_size){
-	size_t ret = current_file_size;
-	int indirectedFd = fd_indirection[fd];
-	if(current_file_size < IO_MAP_SIZE){
-		if(posix_fallocate(indirectedFd, 0, IO_MAP_SIZE) < 0){
-			printf("[%s]: posix_fallocate error\n", __func__);
-		}else{
-			fd_table[indirectedFd].current_file_size = IO_MAP_SIZE;
-			ret = IO_MAP_SIZE;
-		}
-	}else{
-		if(current_file_size == IO_MAP_SIZE)
-			return IO_MAP_SIZE;
-		unsigned long long add_file_size = NthM(fd_table[indirectedFd].increaseCount);
-		ret += add_file_size;
-		if(posix_fallocate(indirectedFd, fd_table[indirectedFd].current_file_size, add_file_size) < 0){
-			printf("[%s]: posix_fallocate error\n", __func__);
-		}else{
-			fd_table[indirectedFd].increaseCount++;
-			fd_table[indirectedFd].current_file_size = ret;
-		}
-	}
-	return ret;
+static inline size_t trunc_expand_fd(int fd, size_t current_file_size) {
+  size_t ret = current_file_size;
+  int indirectedFd = fd_indirection[fd];
+  if (current_file_size < IO_MAP_SIZE) {
+    if (posix_fallocate(indirectedFd, 0, IO_MAP_SIZE) < 0) {
+      printf("[%s]: posix_fallocate error\n", __func__);
+    } else {
+      fd_table[indirectedFd].current_file_size = IO_MAP_SIZE;
+      ret = IO_MAP_SIZE;
+    }
+  } else {
+    if (current_file_size == IO_MAP_SIZE) return IO_MAP_SIZE;
+
+    unsigned long long add_file_size =
+        NthM(fd_table[indirectedFd].increaseCount);
+    ret += add_file_size;
+    if (posix_fallocate(indirectedFd, fd_table[indirectedFd].current_file_size,
+                        add_file_size) < 0) {
+      printf("[%s]: posix_fallocate error\n", __func__);
+    } else {
+      fd_table[indirectedFd].increaseCount++;
+      fd_table[indirectedFd].current_file_size = ret;
+    }
+  }
+  return ret;
 }
 
-static inline uma_t* expand_remap_fd(int fd, size_t current_file_size){
-	int indirectedFd = fd_indirection[fd];
-	size_t ret = trunc_expand_fd(fd,current_file_size);
+static inline uma_t *expand_remap_fd(int fd, size_t current_file_size) {
+  int indirectedFd = fd_indirection[fd];
+  size_t ret = trunc_expand_fd(fd, current_file_size);
 
-	printf("[%s]:addr:%ld, len:%ld\n",__func__,(long int)fd_table[indirectedFd].addr, fd_table[indirectedFd].written_file_size);
-	nvmsync(fd_table[indirectedFd].addr, fd_table[indirectedFd].written_file_size, MS_SYNC);
-	nvmunmap_uma(fd_table[indirectedFd].addr, fd_table[indirectedFd].mapped_size, get_fd_uma(fd));
-	fd_table[indirectedFd].addr = nvmmap(NULL, ret, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-	if(fd_table[indirectedFd].addr){
-		fd_table[indirectedFd].mapped_size = ret;	
-		fd_table[indirectedFd].fd_uma = find_uma(fd_table[indirectedFd].addr);
-	}else{
-		printf("[%s]: Failed!!!\n", __func__);
-	}
-	return fd_table[indirectedFd].fd_uma;
+  printf("[%s]:addr:%ld, len:%ld\n", __func__,
+         (long int)fd_table[indirectedFd].addr,
+         fd_table[indirectedFd].written_file_size);
+
+  nvmsync(fd_table[indirectedFd].addr, fd_table[indirectedFd].written_file_size,
+          MS_SYNC);
+
+  nvmunmap_uma(fd_table[indirectedFd].addr, fd_table[indirectedFd].mapped_size,
+               get_fd_uma(fd));
+
+  fd_table[indirectedFd].addr =
+      nvmmap(NULL, ret, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+  if (fd_table[indirectedFd].addr) {
+    fd_table[indirectedFd].mapped_size = ret;
+    fd_table[indirectedFd].fd_uma = find_uma(fd_table[indirectedFd].addr);
+  } else {
+    printf("[%s]: Failed!!!\n", __func__);
+  }
+  return fd_table[indirectedFd].fd_uma;
 }
 
-int nvcreat(const char *filename, mode_t mode){
-	//TODO should change this to open
-	int fd = creat(filename, mode);
+int nvcreat(const char *filename, mode_t mode) {
+  /* TODO: should change this to open */
+  int fd = creat(filename, mode);
 
-	if(fd>=0){
-		void *addr = nvmmap(NULL, IO_MAP_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-		if(addr>=0)
-			map_fd_addr(fd, addr, 0, 0, IO_MAP_SIZE, filename);
-	}else{
-		//printf("[%s]: open failed\n",__func__);
-	}
+  if (fd >= 0) {
+    void *addr =
+        nvmmap(NULL, IO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
-	return fd;
+    if (addr >= 0) map_fd_addr(fd, addr, 0, 0, IO_MAP_SIZE, filename);
+  }
+  return fd;
 }
 
-static inline void flagSanitization(int *flag){
-	if(!(*flag&O_RDWR)){
-		if(!(*flag&O_WRONLY)){
-			if(!*flag&O_RDONLY){
-				printf("[%s]: open should include one of O_WRONLY, O_RDWR, O_RDONLY", __func__);
-			}
-			*flag ^= O_RDONLY;
-			*flag |= O_RDWR;
-		}else{
-			*flag ^= O_WRONLY;
-			*flag |= O_RDWR;
-		}
-	}
+static inline void sanitize_flags(int *flags) {
+  if (!(*flags & O_RDWR)) {
+    if (!(*flags & O_WRONLY)) {
+      if (!*flags & O_RDONLY) {
+        printf("[%s]: open should include one of O_WRONLY, O_RDWR, O_RDONLY",
+               __func__);
+      }
+      *flags ^= O_RDONLY;
+      *flags |= O_RDWR;
+    } else {
+      *flags ^= O_WRONLY;
+      *flags |= O_RDWR;
+    }
+  }
 }
 
-static inline int fd_validity(int fd){
-	return fcntl(fd, F_GETFL)!=-1 || errno!=EBADF;
+static inline int fd_validity(int fd) {
+  return fcntl(fd, F_GETFL) != -1 || errno != EBADF;
 }
 
-int nvopen(const char* Path, int flags , ...){
-	int fd;
-	int isdir = 0;
-	off_t fd_size = 0;
-	//TODO Implement O_NONBLOCK and O_NODELAY
-	if(flags&O_PATH){
-		return open(Path, flags);
-	}
-	struct stat statbuf;
-	if(stat(Path, &statbuf) != 0){
-		//printf("[%s]: stat failed to Path:%s errno:%d\n", __func__,Path,errno);
-	}else{
-		if(S_ISDIR(statbuf.st_mode) || strncmp(Path, "/dev", 4) == 0){
-			isdir = 1;
-		}else{
-			fd_size = statbuf.st_size;
-		}
-	}
-	if(isdir ==1 || strncmp(Path, "/dev", 4) == 0 || strncmp(Path, "/proc", 5) == 0 || (Path[strlen(Path)-1] == '.' && Path[strlen(Path)-2] == '/')){
-		isdir=1;
-	}else{
-		flagSanitization(&flags);
-	}
-	if (isdir == 0 || flags & O_CREAT) {
-		va_list arg;
-		int mode;
+int nvopen(const char *path, int flags, ...) {
+  struct stat statbuf;
+  off_t fd_size = 0;
+  int isdir = FALSE;
+  int fd, s;
 
-		va_start(arg, flags);
-		mode = va_arg(arg, int);
-		va_end(arg);
-		if((mode & POSSIBLE_MODE)==mode){
-			fd = open(Path, flags, mode);
-		}else{
-			//This is when a file is opened with O_CREAT but with no mode specified or wrong mode
-			//No exact definition on what happens when O_CREAT without mode.
-			//NOVA seems like it cannot handle it. so giving 0666 as default would be a good idea
-			fd = open(Path, flags,0666);
-		}
-	}else{
-		fd = open(Path, flags);
-		fd_table[fd].addr = NULL;
-		fd_table[fd].dupfd = fd;
-		fd_indirection[fd] = fd;
-		if(lastFd < fd)
-			lastFd = fd;
-		return fd;
-	}
+  /* TODO: Implement O_NONBLOCK and O_NODELAY */
 
-	if(fd>=0){
-		fd_table[fd].addr=NULL;
-		off_t written_size = fd_size;
-		size_t mapped_size;
-		void *addr=0;
-		int openedFd = get_path_fd(Path);
+  if (!(flags & O_ATOMIC)) return open(path, flags);
 
-		struct timeval tv;
-		gettimeofday(&tv,NULL);
-		if(openedFd > 0)
-		{
-			fd_table[fd].off = 0;
-			fd_table[fd].dupfd = fd;
-			fd_indirection[fd] = openedFd;
-		}else{
-			fd_indirection[fd] = fd;
-			openedFd = fd;
-			mapped_size = trunc_expand_fd(fd, fd_size);
-			fd_size = mapped_size;
-			addr = nvmmap(NULL, mapped_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-			if(addr>=0)
-				map_fd_addr(fd, addr, fd_size, written_size, mapped_size, Path);
-		}
-		fd_table[openedFd].open++;
-		if(lastFd < openedFd)
-			lastFd = openedFd;
+  if (flags & O_PATH) {
+    return open(path, flags);
+  }
 
-/*
-		if((strlen(Path)==52 && strncmp(Path, "/home/jwhong/jwhong/sqlites/libbld/testdir/./test.db",52)==0) || fd ==9)
-			printf("\t\t\t[%s]: fd:%d->%d pid:%ld tid:%ld addr:%ld uma->start:%ld time:%lf\n", __func__, fd,fd_indirection[fd], syscall(SYS_getpid), syscall(SYS_gettid), (long int)fd_table[fd_indirection[fd]].addr, (long int)fd_table[fd_indirection[fd]].fd_uma->start, tv.tv_sec*10000000+tv.tv_usec);
-			*/
+  s = stat(path, &statbuf);
+  if (__glibc_unlikely(s != 0)) handle_error("stat");
 
-	}else{
-		printf("[%s]: open failed for %s fd:%d errno:%d\n",__func__, Path, fd, errno);
-	}
+  if (S_ISDIR(statbuf.st_mode) || strncmp(path, "/dev", 4) == 0) {
+    isdir = TRUE;
+  } else {
+    fd_size = statbuf.st_size;
+  }
 
-	return fd;
+  if (isdir == 1 || strncmp(path, "/dev", 4) == 0 ||
+      strncmp(path, "/proc", 5) == 0 ||
+      (path[strlen(path) - 1] == '.' && path[strlen(path) - 2] == '/')) {
+    isdir = TRUE;
+  } else {
+    sanitize_flags(&flags);
+  }
+
+  if (isdir == FALSE || flags & O_CREAT) {
+    va_list arg;
+    int mode;
+
+    va_start(arg, flags);
+    mode = va_arg(arg, int);
+    va_end(arg);
+
+    if ((mode & POSSIBLE_MODE) == mode) {
+      fd = open(path, flags, mode);
+    } else {
+      // This is when a file is opened with O_CREAT but with no mode specified
+      // or wrong mode No exact definition on what happens when O_CREAT without
+      // mode. NOVA seems like it cannot handle it. so giving 0666 as default
+      // would be a good idea
+      fd = open(path, flags, 0666);
+    }
+  } else {
+    fd = open(path, flags);
+    fd_table[fd].addr = NULL;
+    fd_table[fd].dupfd = fd;
+    fd_indirection[fd] = fd;
+
+    if (lastFd < fd) lastFd = fd;
+    return fd;
+  }
+
+  if (fd >= 0) {
+    fd_table[fd].addr = NULL;
+    off_t written_size = fd_size;
+    size_t mapped_size;
+    void *addr = 0;
+    int openedFd = get_path_fd(path);
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    if (openedFd > 0) {
+      fd_table[fd].off = 0;
+      fd_table[fd].dupfd = fd;
+      fd_indirection[fd] = openedFd;
+    } else {
+      fd_indirection[fd] = fd;
+      openedFd = fd;
+      mapped_size = trunc_expand_fd(fd, fd_size);
+      fd_size = mapped_size;
+      addr =
+          nvmmap(NULL, mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+      if (addr >= 0)
+        map_fd_addr(fd, addr, fd_size, written_size, mapped_size, path);
+    }
+    fd_table[openedFd].open++;
+    if (lastFd < openedFd) lastFd = openedFd;
+  } else {
+    printf("[%s]: open failed for %s fd:%d errno:%d\n", __func__, path, fd,
+           errno);
+  }
+  return fd;
 }
 
-int nvdup(int oldfd){
-	int newfd = dup(oldfd);
+int nvdup(int oldfd) {
+  int newfd = dup(oldfd);
 
-	//	if(fd_table[fd_indirection[oldfd]].addr != NULL){
-	fd_indirection[newfd] = fd_indirection[oldfd];
-	fd_table[newfd].dupfd = fd_table[oldfd].dupfd;
-	fd_table[fd_table[oldfd].dupfd].dup++;
-	//	}
+  fd_indirection[newfd] = fd_indirection[oldfd];
+  fd_table[newfd].dupfd = fd_table[oldfd].dupfd;
+  fd_table[fd_table[oldfd].dupfd].dup++;
 
-	return newfd;
+  return newfd;
 }
 
-void *unmap_thread(void *vargp){
-	int fd = *((int*)vargp);
+void *unmap_thread(void *vargp) {
+  int fd = *((int *)vargp);
 
-	nvmsync(fd_table[fd].addr, fd_table[fd].written_file_size, MS_SYNC);
-	nvmunmap_uma(fd_table[fd].addr, fd_table[fd].mapped_size, get_fd_uma(fd));
-	fd_table[fd].addr = NULL;
-	//	if(close(fd) <0)
-	//printf("[%s]: close failed\n",__func__);
+  nvmsync(fd_table[fd].addr, fd_table[fd].written_file_size, MS_SYNC);
+  nvmunmap_uma(fd_table[fd].addr, fd_table[fd].mapped_size, get_fd_uma(fd));
+  fd_table[fd].addr = NULL;
 }
 
-int nvclose(int fd){
-	if(get_fd_addr_cur(fd) == NULL){
-		fd_indirection[fd] = 0;
-		return close(fd);
-	}
+int nvclose(int fd) {
+  if (get_fd_addr_cur(fd) == NULL) {
+    fd_indirection[fd] = 0;
+    return close(fd);
+  }
 
-	if(fd_table[fd].dupfd != fd){
-		fd_table[fd_table[fd].dupfd].dup--;
-		if(fd_indirection[fd_table[fd].dupfd] == 0){
-			if(fd_table[fd_table[fd].dupfd].dup==0 && fd_indirection[fd_indirection[fd]]==0){
-				if(fd_table[fd_indirection[fd]].open <= 2 ){
-					fd_table[fd].dupfd=0;
-					printf("goto\n");
-					goto removeOriginalFd;
-				}else 
-					fd_table[fd_indirection[fd]].open--;
-			}
-		}
-		fd_table[fd].dupfd=0;
-	}else if(fd_table[fd_indirection[fd]].open > 1){
-		if(fd_table[fd].dup == 0){
-			fd_table[fd_indirection[fd]].open--;
-			fd_table[fd].off=0;
-			fd_table[fd].dupfd=0;
-		}
-	}else if(fd_table[fd].dup == 0){
-		void *addr;
-		size_t mapped_size;
-removeOriginalFd:
-		addr = fd_table[fd_indirection[fd]].addr;
-		mapped_size = fd_table[fd_indirection[fd]].mapped_size;
-		trunc_fit_fd(fd);
-
-		//printf("[%s]:  fd:%d, addr:%ld, fd_uma:%ld, len:%ld\n", __func__, fd,(long int)addr, (long int)get_fd_uma(fd)->start, mapped_size);
-		//pthread_create(&thread, 0, unmap_thread, &fd);
+  if (fd_table[fd].dupfd != fd) {
+    fd_table[fd_table[fd].dupfd].dup--;
+    if (fd_indirection[fd_table[fd].dupfd] == 0) {
+      if (fd_table[fd_table[fd].dupfd].dup == 0 &&
+          fd_indirection[fd_indirection[fd]] == 0) {
+        if (fd_table[fd_indirection[fd]].open <= 2) {
+          fd_table[fd].dupfd = 0;
+          printf("goto\n");
+          goto removeOriginalFd;
+        } else
+          fd_table[fd_indirection[fd]].open--;
+      }
+    }
+    fd_table[fd].dupfd = 0;
+  } else if (fd_table[fd_indirection[fd]].open > 1) {
+    if (fd_table[fd].dup == 0) {
+      fd_table[fd_indirection[fd]].open--;
+      fd_table[fd].off = 0;
+      fd_table[fd].dupfd = 0;
+    }
+  } else if (fd_table[fd].dup == 0) {
+    void *addr;
+    size_t mapped_size;
+  removeOriginalFd:
+    addr = fd_table[fd_indirection[fd]].addr;
+    mapped_size = fd_table[fd_indirection[fd]].mapped_size;
+    trunc_fit_fd(fd);
     close_sync_thread(fd_table[fd_indirection[fd]].fd_uma);
-		nvmsync_uma(addr, fd_table[fd_indirection[fd]].written_file_size, MS_SYNC, get_fd_uma(fd));
-		nvmunmap_uma(fd_table[fd_indirection[fd]].addr, fd_table[fd_indirection[fd]].mapped_size, get_fd_uma(fd));
 
-		fd_table[fd_indirection[fd]].addr = NULL;
-		fd_table[fd_indirection[fd]].off = 0;
-		memset(fd_table[fd_indirection[fd]].pathname, 0, PATH_SIZE);
-		fd_table[fd_indirection[fd]].mapped_size = 0;
-		fd_table[fd_indirection[fd]].written_file_size = 0;
-		fd_table[fd_indirection[fd]].current_file_size = 0;
-		fd_table[fd_indirection[fd]].fd_uma = NULL;
-		fd_table[fd_indirection[fd]].open = 0;
-		fd_table[fd_indirection[fd]].dup = 0;
-		fd_table[fd_indirection[fd]].dupfd = 0;
-		fd_table[fd_indirection[fd]].increaseCount = 0;
-	}else{
-		fd_table[fd_indirection[fd]].open--;
-	}
-	fd_indirection[fd] = 0;
+    nvmsync_uma(addr, fd_table[fd_indirection[fd]].written_file_size, MS_SYNC,
+                get_fd_uma(fd));
 
-	return close(fd);
+    nvmunmap_uma(fd_table[fd_indirection[fd]].addr,
+                 fd_table[fd_indirection[fd]].mapped_size, get_fd_uma(fd));
+
+    fd_table[fd_indirection[fd]].addr = NULL;
+    fd_table[fd_indirection[fd]].off = 0;
+    memset(fd_table[fd_indirection[fd]].pathname, 0, PATH_SIZE);
+    fd_table[fd_indirection[fd]].mapped_size = 0;
+    fd_table[fd_indirection[fd]].written_file_size = 0;
+    fd_table[fd_indirection[fd]].current_file_size = 0;
+    fd_table[fd_indirection[fd]].fd_uma = NULL;
+    fd_table[fd_indirection[fd]].open = 0;
+    fd_table[fd_indirection[fd]].dup = 0;
+    fd_table[fd_indirection[fd]].dupfd = 0;
+    fd_table[fd_indirection[fd]].increaseCount = 0;
+  } else {
+    fd_table[fd_indirection[fd]].open--;
+  }
+  fd_indirection[fd] = 0;
+
+  return close(fd);
 }
 
-static inline ssize_t pwriteToMap(int fd, const void* buf, size_t cnt, void *dst){
-	//void *dst = get_fd_addr_set(fd,off);
-	//uma_t *dst_uma = find_uma(dst);
-	uma_t *dst_uma = get_fd_uma(fd);
+static inline ssize_t pwriteToMap(int fd, const void *buf, size_t cnt,
+                                  void *dst) {
+  // void *dst = get_fd_addr_set(fd,off);
+  // uma_t *dst_uma = find_uma(dst);
+  uma_t *dst_uma = get_fd_uma(fd);
 
+  /*
+     if(fd_table[fd].addr == NULL){
+  //printf("[%s]: Invalid write request from fd %d\n",__func__, fd);
+  }
+   */
+  if (dst_uma) {
+    // TODO Check if trunc_fit_fd is needed in libnvmmio mmap semantic
+    // trunc_fit_fd(fd);
+    long long int required_size =
+        cnt + (dst - fd_table[fd_indirection[fd]].addr);
+    if (required_size > fd_table[fd_indirection[fd]].current_file_size) {
+      printf("[%s]: call expand remap fd current size:%ld required size:%lld\n",
+             __func__, fd_table[fd_indirection[fd]].current_file_size,
+             required_size);
+      dst_uma = expand_remap_fd(fd, required_size);
+      dst = get_fd_addr_cur(
+          fd);  // required_size + fd_table[fd_indirection[fd]].addr;
+    }
+    increase_write_count(dst_uma);
 
-	/*
-	   if(fd_table[fd].addr == NULL){
-	//printf("[%s]: Invalid write request from fd %d\n",__func__, fd);
-	}
-	*/
-	if (dst_uma) {
-		//TODO Check if trunc_fit_fd is needed in libnvmmio mmap semantic
-		//trunc_fit_fd(fd);
-		long long int required_size = cnt + (dst - fd_table[fd_indirection[fd]].addr);
-		if(required_size > fd_table[fd_indirection[fd]].current_file_size){
-			printf("[%s]: call expand remap fd current size:%ld required size:%lld\n", __func__, fd_table[fd_indirection[fd]].current_file_size, required_size);
-			dst_uma = expand_remap_fd(fd, required_size);
-			dst = get_fd_addr_cur(fd);//required_size + fd_table[fd_indirection[fd]].addr;
-		}
-		increase_write_count(dst_uma);
-
-		nvmemcpy_write(dst, buf, cnt, dst_uma);
-	}else{
-		printf("[%s]: dst_uma for fd %d->%d  doesn't exist\n",__func__, fd, fd_indirection[fd]);
-	}
-	return cnt;
+    nvmemcpy_write(dst, buf, cnt, dst_uma);
+  } else {
+    printf("[%s]: dst_uma for fd %d->%d  doesn't exist\n", __func__, fd,
+           fd_indirection[fd]);
+  }
+  return cnt;
 }
 
-static inline ssize_t preadFromMap(int fd, void* buf, size_t cnt, void *src){
-	uma_t *src_uma = get_fd_uma(fd);
+static inline ssize_t preadFromMap(int fd, void *buf, size_t cnt, void *src) {
+  uma_t *src_uma = get_fd_uma(fd);
 
-	/*
-	   if(fd_table[fd_indirection[fd]].addr == NULL){
-	//printf("[%s]: Invalid read request from fd %d\n",__func__, fd);
-	}
-	*/
+  /*
+     if(fd_table[fd_indirection[fd]].addr == NULL){
+  //printf("[%s]: Invalid read request from fd %d\n",__func__, fd);
+  }
+   */
 
-	if (src_uma) {
-		increase_read_count(src_uma);
-		if (src_uma->policy == UNDO) {
-			nvmemcpy_memcpy(buf, src, cnt);
-			return cnt;
-		} else {
-			nvmemcpy_read_redo(buf, src, cnt);
-		}
-	}
-	return cnt;
+  if (src_uma) {
+    increase_read_count(src_uma);
+    if (src_uma->policy == UNDO) {
+      nvmemcpy_memcpy(buf, src, cnt);
+      return cnt;
+    } else {
+      nvmemcpy_read_redo(buf, src, cnt);
+    }
+  }
+  return cnt;
 }
 
-ssize_t nvread (int fd, void* buf, size_t cnt){
-	void *src = get_fd_addr_cur(fd);
-	if(src == NULL){
-		//	printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
-		return read(fd, buf, cnt);
-	}
-	ssize_t ret = preadFromMap(fd, buf, cnt, src); 
-	if(fd_table[fd].dupfd == fd){
-		fd_table[fd].off += cnt;
-	}else{
-		fd_table[fd_indirection[fd]].off += cnt;
-	}
+ssize_t nvread(int fd, void *buf, size_t cnt) {
+  void *src = get_fd_addr_cur(fd);
+  if (src == NULL) {
+    //	printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
+    return read(fd, buf, cnt);
+  }
+  ssize_t ret = preadFromMap(fd, buf, cnt, src);
+  if (fd_table[fd].dupfd == fd) {
+    fd_table[fd].off += cnt;
+  } else {
+    fd_table[fd_indirection[fd]].off += cnt;
+  }
 
-	return ret;
+  return ret;
 }
 
-ssize_t nvwrite(int fd, const void* buf, size_t cnt){
-	void *dst;
+ssize_t nvwrite(int fd, const void *buf, size_t cnt) {
+  void *dst;
 
   dst = get_fd_addr_cur(fd);
 
-	if(dst == NULL){
-		//printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
-		return write(fd, buf, cnt);
-	}
-	ssize_t ret = pwriteToMap(fd,buf,cnt,dst);
+  if (dst == NULL) {
+    // printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
+    return write(fd, buf, cnt);
+  }
+  ssize_t ret = pwriteToMap(fd, buf, cnt, dst);
 
-	//printf("\t\t\t[%s]: write Length:%ld fd:%d\n", __func__, cnt, fd);
-	off_t off;
-	if(fd_table[fd].dupfd == fd){
-		fd_table[fd].off += cnt;
-		off = fd_table[fd].off;
-	}else{
-		fd_table[fd_indirection[fd]].off += cnt;
-		off = fd_table[fd_indirection[fd]].off;
-	}
-	if(off > fd_table[fd_indirection[fd]].written_file_size){
-		fd_table[fd_indirection[fd]].written_file_size = off;
-	}
+  // printf("\t\t\t[%s]: write Length:%ld fd:%d\n", __func__, cnt, fd);
+  off_t off;
+  if (fd_table[fd].dupfd == fd) {
+    fd_table[fd].off += cnt;
+    off = fd_table[fd].off;
+  } else {
+    fd_table[fd_indirection[fd]].off += cnt;
+    off = fd_table[fd_indirection[fd]].off;
+  }
+  if (off > fd_table[fd_indirection[fd]].written_file_size) {
+    fd_table[fd_indirection[fd]].written_file_size = off;
+  }
 
-	return ret;
+  return ret;
 }
 
-off_t nvlseek(int fd, off_t offset, int whence){
-	off_t off;
-	switch(whence){
-		case SEEK_SET:
-			//validate offset range
-			if(fd_table[fd].dupfd == fd)
-				fd_table[fd].off = offset;
-			else
-				fd_table[fd_indirection[fd]].off = offset;
-			
-			return offset;
+off_t nvlseek(int fd, off_t offset, int whence) {
+  off_t off;
+  switch (whence) {
+    case SEEK_SET:
+      // validate offset range
+      if (fd_table[fd].dupfd == fd)
+        fd_table[fd].off = offset;
+      else
+        fd_table[fd_indirection[fd]].off = offset;
 
-		case SEEK_CUR:
-			if(fd_indirection[fd]==0)
-				return -1;
-			if(fd_table[fd].dupfd == fd){
-				fd_table[fd].off += offset;
-				off = fd_table[fd].off;
-			}else{
-				fd_table[fd_indirection[fd]].off += offset;
-				off = fd_table[fd_indirection[fd]].off;
-			}
-			return off;
+      return offset;
 
-		case SEEK_END:
-			if(fd_table[fd].dupfd == fd){
-				fd_table[fd].off = fd_table[fd].written_file_size + offset; 
-				off = fd_table[fd].off;
-			}else{
-				fd_table[fd_indirection[fd]].off  = fd_table[fd].written_file_size + offset;
-				off = fd_table[fd_indirection[fd]].off;
-			}
-			return off;
+    case SEEK_CUR:
+      if (fd_indirection[fd] == 0) return -1;
+      if (fd_table[fd].dupfd == fd) {
+        fd_table[fd].off += offset;
+        off = fd_table[fd].off;
+      } else {
+        fd_table[fd_indirection[fd]].off += offset;
+        off = fd_table[fd_indirection[fd]].off;
+      }
+      return off;
 
-		default:
-			//SEEK_DATA, SEEK_HOLE if needed
-			return EINVAL;
-	}
+    case SEEK_END:
+      if (fd_table[fd].dupfd == fd) {
+        fd_table[fd].off = fd_table[fd].written_file_size + offset;
+        off = fd_table[fd].off;
+      } else {
+        fd_table[fd_indirection[fd]].off =
+            fd_table[fd].written_file_size + offset;
+        off = fd_table[fd_indirection[fd]].off;
+      }
+      return off;
+
+    default:
+      // SEEK_DATA, SEEK_HOLE if needed
+      return EINVAL;
+  }
 }
 
-int nvftruncate(int fd, off_t length){
-	int ret = ftruncate(fd, length);
-	if(ret == 0){
-		fd_table[fd_indirection[fd]].written_file_size = length;
-		fd_table[fd_indirection[fd]].current_file_size = length;
-		//TODO check sparse file is posix standard
-	}
+int nvftruncate(int fd, off_t length) {
+  int ret = ftruncate(fd, length);
+  if (ret == 0) {
+    fd_table[fd_indirection[fd]].written_file_size = length;
+    fd_table[fd_indirection[fd]].current_file_size = length;
+    // TODO check sparse file is posix standard
+  }
 
-	return ret;
+  return ret;
 }
 
-int nvfsync(int fd){
-	int indirectedFd = fd_indirection[fd];
-	if(get_fd_addr_cur(fd) == NULL){
-		return fsync(indirectedFd);
-	}
-	//trunc_fit_fd(fd);
-	//printf("[%s]:addr:%ld, len:%ld\n",__func__,(long int)fd_table[fd].addr, fd_table[fd].written_file_size);
-	return nvmsync_uma(fd_table[indirectedFd].addr, fd_table[indirectedFd].written_file_size, MS_ASYNC, get_fd_uma(fd));
+int nvfsync(int fd) {
+  int indirectedFd = fd_indirection[fd];
+  if (get_fd_addr_cur(fd) == NULL) {
+    return fsync(indirectedFd);
+  }
+  // trunc_fit_fd(fd);
+  // printf("[%s]:addr:%ld, len:%ld\n",__func__,(long int)fd_table[fd].addr,
+  // fd_table[fd].written_file_size);
+  return nvmsync_uma(fd_table[indirectedFd].addr,
+                     fd_table[indirectedFd].written_file_size, MS_ASYNC,
+                     get_fd_uma(fd));
 }
 
-//pread does not change offset
-ssize_t nvpread(int fd, void *buf, size_t cnt, off_t offset){
-	if(get_fd_addr_cur(fd) == NULL){
-		//	printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
-		return pread(fd, buf, cnt, offset);
-	}
-	void *src = get_fd_addr_set(fd, offset);
-	ssize_t ret = preadFromMap(fd, buf, cnt, src); 
+// pread does not change offset
+ssize_t nvpread(int fd, void *buf, size_t cnt, off_t offset) {
+  if (get_fd_addr_cur(fd) == NULL) {
+    //	printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
+    return pread(fd, buf, cnt, offset);
+  }
+  void *src = get_fd_addr_set(fd, offset);
+  ssize_t ret = preadFromMap(fd, buf, cnt, src);
 
-	return ret;
+  return ret;
 }
-ssize_t nvpread64(int fd, void *buf, size_t cnt, off_t offset){
-	return 	nvpread(fd, buf, cnt, offset);
-}
-
-ssize_t nvpwrite(int fd, const void *buf, size_t cnt, off_t offset){
-	if(get_fd_addr_cur(fd) == NULL){
-		return pwrite(fd, buf, cnt, offset);
-	}
-	ssize_t ret = pwriteToMap(fd, buf, cnt, get_fd_addr_set(fd, offset));
-
-	off_t written_size = offset + cnt;
-	if(written_size > fd_table[fd_indirection[fd]].written_file_size){
-		fd_table[fd_indirection[fd]].written_file_size = written_size;
-	}
-
-	return ret;
-}
-ssize_t nvpwrite64(int fd, const void *buf, size_t cnt, off_t offset){
-	return nvpwrite(fd, buf, cnt, offset);
+ssize_t nvpread64(int fd, void *buf, size_t cnt, off_t offset) {
+  return nvpread(fd, buf, cnt, offset);
 }
 
-//TODO Implement this as multithreaded from thread pool made in init()
-ssize_t nvpreadv(int fd, const struct iovec *iov, int iovcnt, off_t offset){
-	//TODO Stopped Here
-	int i;
-	ssize_t ret = 0;
-	if(get_fd_addr_cur(fd) == NULL){
-		return preadv(fd_indirection[fd], iov, iovcnt, offset);
-	}
-	void *src = get_fd_addr_set(fd, offset);
+ssize_t nvpwrite(int fd, const void *buf, size_t cnt, off_t offset) {
+  if (get_fd_addr_cur(fd) == NULL) {
+    return pwrite(fd, buf, cnt, offset);
+  }
+  ssize_t ret = pwriteToMap(fd, buf, cnt, get_fd_addr_set(fd, offset));
 
-	for(i=0; i<iovcnt; i++){
-		ret += preadFromMap(fd, iov[i].iov_base, iov[i].iov_len, src);
-		src += iov[i].iov_len;
-	}
+  off_t written_size = offset + cnt;
+  if (written_size > fd_table[fd_indirection[fd]].written_file_size) {
+    fd_table[fd_indirection[fd]].written_file_size = written_size;
+  }
 
-	return ret;
+  return ret;
+}
+ssize_t nvpwrite64(int fd, const void *buf, size_t cnt, off_t offset) {
+  return nvpwrite(fd, buf, cnt, offset);
 }
 
-ssize_t nvpwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset){
-	if(get_fd_addr_cur(fd) == NULL){
-		return pwritev(fd, iov, iovcnt, offset);
-	}
-	int i;
-	ssize_t ret = 0, file_size = fd_table[fd_indirection[fd]].current_file_size, len = offset;
-	void *dst = get_fd_addr_set(fd, offset);
+// TODO Implement this as multithreaded from thread pool made in init()
+ssize_t nvpreadv(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
+  // TODO Stopped Here
+  int i;
+  ssize_t ret = 0;
+  if (get_fd_addr_cur(fd) == NULL) {
+    return preadv(fd_indirection[fd], iov, iovcnt, offset);
+  }
+  void *src = get_fd_addr_set(fd, offset);
 
-	for(i=0; i<iovcnt; i++){
-		len += iov[i].iov_len;
-		if(len > file_size){
-			expand_remap_fd(fd, file_size);
-		}
-		ret += pwriteToMap(fd, iov[i].iov_base, iov[i].iov_len, dst);
-		dst += iov[i].iov_len;
-	}
+  for (i = 0; i < iovcnt; i++) {
+    ret += preadFromMap(fd, iov[i].iov_base, iov[i].iov_len, src);
+    src += iov[i].iov_len;
+  }
 
-	off_t written_size = offset + ret;
-	if(written_size > file_size){
-		fd_table[fd_indirection[fd]].written_file_size = written_size;
-	}
-
-	return ret;
+  return ret;
 }
 
-ssize_t nvreadv(int fd, const struct iovec *iov, int iovcnt){
-	int i;
-	ssize_t ret = 0;
-	void *src = get_fd_addr_cur(fd);
-	if(src == NULL){
-		//	printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
-		return readv(fd, iov, iovcnt);
-	}
+ssize_t nvpwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
+  if (get_fd_addr_cur(fd) == NULL) {
+    return pwritev(fd, iov, iovcnt, offset);
+  }
+  int i;
+  ssize_t ret = 0, file_size = fd_table[fd_indirection[fd]].current_file_size,
+          len = offset;
+  void *dst = get_fd_addr_set(fd, offset);
 
-	for(i=0; i<iovcnt; i++){
-		ret += preadFromMap(fd, iov[i].iov_base, iov[i].iov_len, src);
-		src += iov[i].iov_len;
-	}
+  for (i = 0; i < iovcnt; i++) {
+    len += iov[i].iov_len;
+    if (len > file_size) {
+      expand_remap_fd(fd, file_size);
+    }
+    ret += pwriteToMap(fd, iov[i].iov_base, iov[i].iov_len, dst);
+    dst += iov[i].iov_len;
+  }
 
-	if(fd_table[fd].dupfd == fd)
-		fd_table[fd].off += ret;
-	else
-		fd_table[fd_indirection[fd]].off += ret;
-	
+  off_t written_size = offset + ret;
+  if (written_size > file_size) {
+    fd_table[fd_indirection[fd]].written_file_size = written_size;
+  }
 
-	return ret;
+  return ret;
 }
 
-ssize_t nvwritev(int fd, const struct iovec *iov, int iovcnt){
-	int i;
-	ssize_t ret = 0,file_size = fd_table[fd_indirection[fd]].current_file_size, len;
-	void *dst = get_fd_addr_cur(fd);
-	if(dst == NULL){
-		return writev(fd, iov, iovcnt);
-	}
+ssize_t nvreadv(int fd, const struct iovec *iov, int iovcnt) {
+  int i;
+  ssize_t ret = 0;
+  void *src = get_fd_addr_cur(fd);
+  if (src == NULL) {
+    //	printf("[%s] Called write with unmapped fd %d\\n", __func__, fd);
+    return readv(fd, iov, iovcnt);
+  }
 
-	if(fd_table[fd].dupfd == fd)
-		len = fd_table[fd].off;
-	else
-		len = fd_table[fd_indirection[fd]].off;
+  for (i = 0; i < iovcnt; i++) {
+    ret += preadFromMap(fd, iov[i].iov_base, iov[i].iov_len, src);
+    src += iov[i].iov_len;
+  }
 
-	for(i=0; i<iovcnt; i++){
-		ssize_t iovlen = iov[i].iov_len;
-		len += iovlen;
-		if(len > file_size){
-			expand_remap_fd(fd, file_size);
-		}
-		ret += pwriteToMap(fd, iov[i].iov_base, iovlen, dst);
-		dst += iovlen;
-	}
+  if (fd_table[fd].dupfd == fd)
+    fd_table[fd].off += ret;
+  else
+    fd_table[fd_indirection[fd]].off += ret;
 
-	if(fd_table[fd].dupfd == fd){
-		fd_table[fd].off += ret;
-		if(fd_table[fd].off > file_size)
-			fd_table[fd_indirection[fd]].written_file_size = fd_table[fd].off;
-	}else{
-		fd_table[fd_indirection[fd]].off += ret;
-		if(fd_table[fd_indirection[fd]].off > file_size)
-			fd_table[fd_indirection[fd]].written_file_size = fd_table[fd_indirection[fd]].off;
-	}
-
-	return ret;
+  return ret;
 }
 
-int nvfdatasync(int fd){
-	if(get_fd_addr_cur(fd) == NULL){
-		//printf("\n\n%s called ", __func__);
-		int ret = fdatasync(fd);
-		//printf("ret : %d ", ret);
-		if(ret <0)
-			//printf(" errno:%d\n", errno);
-			return ret;
-	}
-	printf("\n\n%s called fd:%d\n\n", __func__, fd);
-	return nvfsync(fd);
+ssize_t nvwritev(int fd, const struct iovec *iov, int iovcnt) {
+  int i;
+  ssize_t ret = 0, file_size = fd_table[fd_indirection[fd]].current_file_size,
+          len;
+  void *dst = get_fd_addr_cur(fd);
+  if (dst == NULL) {
+    return writev(fd, iov, iovcnt);
+  }
+
+  if (fd_table[fd].dupfd == fd)
+    len = fd_table[fd].off;
+  else
+    len = fd_table[fd_indirection[fd]].off;
+
+  for (i = 0; i < iovcnt; i++) {
+    ssize_t iovlen = iov[i].iov_len;
+    len += iovlen;
+    if (len > file_size) {
+      expand_remap_fd(fd, file_size);
+    }
+    ret += pwriteToMap(fd, iov[i].iov_base, iovlen, dst);
+    dst += iovlen;
+  }
+
+  if (fd_table[fd].dupfd == fd) {
+    fd_table[fd].off += ret;
+    if (fd_table[fd].off > file_size)
+      fd_table[fd_indirection[fd]].written_file_size = fd_table[fd].off;
+  } else {
+    fd_table[fd_indirection[fd]].off += ret;
+    if (fd_table[fd_indirection[fd]].off > file_size)
+      fd_table[fd_indirection[fd]].written_file_size =
+          fd_table[fd_indirection[fd]].off;
+  }
+
+  return ret;
 }
 
-
-int nvfcntl(int fd, int cmd, ...){ 
-	va_list arg;
-	struct flock *f1;
-	int flag;
-	switch(cmd){
-		case F_SETLK:
-			va_start(arg, cmd);
-			f1 = va_arg(arg, struct flock*);
-			va_end(arg);
-			return fcntl(fd_indirection[fd], cmd, f1);
-		case F_SETFD:
-			va_start(arg, cmd);
-			flag = va_arg(arg, int);
-			va_end(arg);
-			flagSanitization(&flag);
-			return fcntl(fd_indirection[fd], cmd, flag);
-		case F_GETFD:
-			//return fd flag
-			return fcntl(fd_indirection[fd], cmd);
-		default:
-			//printf("[%s]: the cmd:%d is not defined in %s\n", __func__, cmd, __func__);
-			return 0;
-	}
-}
-int nvstat(const char *pathname, struct stat *statbuf){
-	int ret = stat(pathname, statbuf);
-	int fd = get_path_fd(pathname);
-	statbuf->st_size = fd_table[fd_indirection[fd]].written_file_size;
-	return ret;
-}
-int nvunlink(const char *pathname){
-	int fd = get_path_fd(pathname);
-	   if(fd > 0){
-		   nvclose(fd);
-	   }
-
-	return unlink(pathname);
-}
-int nvrename(const char *oldpath, const char *newpath){
-	int fd = get_path_fd(oldpath);
-	if(fd > 0){
-		memcpy(fd_table[fd_indirection[fd]].pathname, newpath, strlen(newpath));
-	}
-	return rename(oldpath, newpath);
-}
-int nvposix_fadvise(int fd, off_t offset, off_t len, int advice){
-	return posix_fadvise(fd_indirection[fd], offset, len, advice);
-}
-int nvfstat(int fd, struct stat *statbuf){
-	int ret = fstat(fd, statbuf);
-	statbuf->st_size = fd_table[fd_indirection[fd]].written_file_size;
-	return ret;
-}
-int nvsync_file_range(int fd, off64_t offset, off64_t nbytes, unsigned int flags){
-	trunc_fit_fd(fd);
-	printf("[%s]:addr:%ld, len:%ld\n",__func__,(long int)fd_table[fd].addr, fd_table[fd].written_file_size);
-	return nvmsync(fd_table[fd_indirection[fd]].addr + offset, nbytes, MS_ASYNC);
+int nvfdatasync(int fd) {
+  if (get_fd_addr_cur(fd) == NULL) {
+    // printf("\n\n%s called ", __func__);
+    int ret = fdatasync(fd);
+    // printf("ret : %d ", ret);
+    if (ret < 0)
+      // printf(" errno:%d\n", errno);
+      return ret;
+  }
+  printf("\n\n%s called fd:%d\n\n", __func__, fd);
+  return nvfsync(fd);
 }
 
-int nvfallocate(int fd, int mode, off_t offset, off_t len){
-	//TODO: zero out unwritten area to end of file
-	off_t required_len = offset + len;
-	size_t current_file_size = fd_table[fd_indirection[fd]].current_file_size;
-	printf("\n[%s]\n\n", __func__);
+int nvfcntl(int fd, int cmd, ...) {
+  va_list arg;
+  struct flock *f1;
+  int flags;
+  switch (cmd) {
+    case F_SETLK:
+      va_start(arg, cmd);
+      f1 = va_arg(arg, struct flock *);
+      va_end(arg);
+      return fcntl(fd_indirection[fd], cmd, f1);
+    case F_SETFD:
+      va_start(arg, cmd);
+      flags = va_arg(arg, int);
+      va_end(arg);
+      sanitize_flags(&flags);
+      return fcntl(fd_indirection[fd], cmd, flags);
+    case F_GETFD:
+      // return fd flags
+      return fcntl(fd_indirection[fd], cmd);
+    default:
+      // printf("[%s]: the cmd:%d is not defined in %s\n", __func__, cmd,
+      // __func__);
+      return 0;
+  }
+}
+int nvstat(const char *pathname, struct stat *statbuf) {
+  int ret = stat(pathname, statbuf);
+  int fd = get_path_fd(pathname);
+  statbuf->st_size = fd_table[fd_indirection[fd]].written_file_size;
+  return ret;
+}
+int nvunlink(const char *pathname) {
+  int fd = get_path_fd(pathname);
+  if (fd > 0) {
+    nvclose(fd);
+  }
 
-	if(current_file_size < required_len){
-		int ret = fallocate(fd, mode, offset, len);
-		if(ret < 0)
-			return ret;
-		else{
-			fd_table[fd_indirection[fd]].current_file_size = required_len;
-		}
-		return ret;
-	}else{
-		return fallocate(fd, mode, offset, len);
-	}
+  return unlink(pathname);
+}
+int nvrename(const char *oldpath, const char *newpath) {
+  int fd = get_path_fd(oldpath);
+  if (fd > 0) {
+    memcpy(fd_table[fd_indirection[fd]].pathname, newpath, strlen(newpath));
+  }
+  return rename(oldpath, newpath);
+}
+int nvposix_fadvise(int fd, off_t offset, off_t len, int advice) {
+  return posix_fadvise(fd_indirection[fd], offset, len, advice);
+}
+int nvfstat(int fd, struct stat *statbuf) {
+  int ret = fstat(fd, statbuf);
+  statbuf->st_size = fd_table[fd_indirection[fd]].written_file_size;
+  return ret;
+}
+int nvsync_file_range(int fd, off64_t offset, off64_t nbytes,
+                      unsigned int flags) {
+  trunc_fit_fd(fd);
+  printf("[%s]:addr:%ld, len:%ld\n", __func__, (long int)fd_table[fd].addr,
+         fd_table[fd].written_file_size);
+  return nvmsync(fd_table[fd_indirection[fd]].addr + offset, nbytes, MS_ASYNC);
 }
 
-int nvposix_fallocate(int fd, off_t offset, off_t len){
+int nvfallocate(int fd, int mode, off_t offset, off_t len) {
+  // TODO: zero out unwritten area to end of file
+  off_t required_len = offset + len;
+  size_t current_file_size = fd_table[fd_indirection[fd]].current_file_size;
+  printf("\n[%s]\n\n", __func__);
 
+  if (current_file_size < required_len) {
+    int ret = fallocate(fd, mode, offset, len);
+    if (ret < 0)
+      return ret;
+    else {
+      fd_table[fd_indirection[fd]].current_file_size = required_len;
+    }
+    return ret;
+  } else {
+    return fallocate(fd, mode, offset, len);
+  }
 }
-#if 0
-char *nvstrchr(const char *s, int c) {
-	uma_t *uma;
-	char *s_ptr;
-	size_t n;
-
-	s_ptr = s;
-
-	if (filter_addr(s)) {
-		uma = find_uma(s);
-
-		if (uma) {
-			increase_read_count(uma);
-
-			if (uma->policy == REDO) {
-
-			}
-		}
-	}
-
-	return strchr(s_ptr, c);
-}
-#endif

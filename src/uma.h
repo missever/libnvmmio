@@ -5,8 +5,8 @@
 #include <pthread.h>
 #include <sys/types.h>
 
-#include "rbtree.h"
 #include "list.h"
+#include "rbtree.h"
 
 #define MAX_NR_UMAS (1UL << 10)
 #define SYNC_PERIOD (10)
@@ -14,8 +14,8 @@
 typedef struct sync_thread_struct {
   int id;
   pthread_t tid[2];
-  //pthread_cond_t cond;
-  //pthread_mutex_t mutex;
+  // pthread_cond_t cond;
+  // pthread_mutex_t mutex;
   void *uma;
 } sync_thread_t;
 
@@ -30,8 +30,6 @@ typedef struct mmap_area_struct {
   unsigned long write;
   struct thread_info_struct *tinfo;
   pthread_rwlock_t *rwlockp;
-  //unsigned long position;
-  //unsigned long size;
   struct rb_node rb;
   struct list_head list;
   int id;

@@ -4,7 +4,6 @@ CFLAGS = -lpthread -lpmem -g
 
 $(TARGET):$(OBJECTS)
 	ar rscv $@ $^
-	ctags *.[ch]
 
 .c.o:
 	gcc -c $< $(CFLAGS)

@@ -1,15 +1,15 @@
 #define _GNU_SOURCE
 
-#include "allocator.h"
-#include "internal.h"
-#include "stats.h"
-
-#include <string.h>
 #include <fcntl.h>
 #include <libpmem.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+#include "allocator.h"
+#include "internal.h"
+#include "stats.h"
 
 typedef struct freelist_struct {
   list_node_t *head;
@@ -76,9 +76,8 @@ static void *map_logfile(const char *path, size_t len) {
 
   if (path == NULL) {
     fd = -1;
-    flags = MAP_ANONYMOUS|MAP_SHARED;
-  }
-  else {
+    flags = MAP_ANONYMOUS | MAP_SHARED;
+  } else {
     fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
     if (__glibc_unlikely(fd == -1)) {
       handle_error("open");
@@ -88,15 +87,13 @@ static void *map_logfile(const char *path, size_t len) {
     if (__glibc_unlikely(s != 0)) {
       handle_error("fallocate");
     }
-    flags = MAP_SHARED|MAP_POPULATE;
+    flags = MAP_SHARED | MAP_POPULATE;
   }
 
-  addr = mmap(0, len, PROT_READ|PROT_WRITE, flags, fd, 0);
+  addr = mmap(0, len, PROT_READ | PROT_WRITE, flags, fd, 0);
   if (__glibc_unlikely(addr == MAP_FAILED)) {
     handle_error("mmap");
   }
-
-  //printf("%s, %s\n", path, size2str(len, buf));
 
   return addr;
 }
@@ -123,58 +120,6 @@ static void free_node(list_node_t *node) {
   local_node_head = node;
 }
 
-#if 0
-static list_node_t *create_entries_list(void *addr, int nrnodes) {
-  list_node_t *node;
-  list_node_t *head = NULL;
-  log_entry_t *entry;
-  int i;
-
-  for (i = 0; i < nrnodes; i++) {
-    entry = (log_entry_t *)(addr + (i * sizeof(log_entry_t)));
-    entry->data = NULL;
-    entry->rwlockp = (pthread_rwlock_t *)malloc(sizeof(pthread_rwlock_t));
-    if (entry->rwlockp == NULL) {
-      handle_error("malloc for rwlockp");
-    }
-
-    node = alloc_list_node();
-    node->ptr = entry;
-    node->next = head;
-    head = node;
-  }
-  return head;
-}
-
-static list_node_t *create_data_list(void *addr, size_t size, int nrnodes) {
-  list_node_t *node;
-  list_node_t *head = NULL;
-  int i;
-
-  for (i = 0; i < nrnodes; i++) {
-    node = alloc_list_node();
-    node->ptr = addr + (i * size);
-    node->next = head;
-    head = node;
-  }
-  return head;
-}
-
-static list_node_t *create_uma_list(void *addr, int nrnodes) {
-  list_node_t *node;
-  list_node_t *head = NULL;
-  int i;
-
-  for (i = 0; i < nrnodes; i++) {
-    node = alloc_list_node();
-    node->ptr = addr + (i * sizeof(uma_t));
-    node->next = head;
-    head = node;
-  }
-  return head;
-}
-#endif
-
 static void init_entries_lock(list_node_t *head) {
   log_entry_t *entry;
 
@@ -184,18 +129,19 @@ static void init_entries_lock(list_node_t *head) {
     if (__glibc_unlikely(entry->rwlockp == NULL)) {
       handle_error("malloc for rwlockp");
     }
-
     head = head->next;
   }
 }
 
-static list_node_t *create_list(void *address, size_t size, unsigned long count, list_node_t **tail) {
+static list_node_t *create_list(void *address, size_t size, unsigned long count,
+                                list_node_t **tail) {
   list_node_t *node;
   list_node_t *head = NULL;
   unsigned long i;
 
-  if (tail != NULL)
+  if (tail != NULL) {
     *tail = NULL;
+  }
 
   for (i = 0; i < count; i++) {
     node = alloc_list_node();
@@ -203,8 +149,9 @@ static list_node_t *create_list(void *address, size_t size, unsigned long count,
     node->next = head;
     head = node;
 
-    if (tail && *tail == NULL)
+    if (tail && *tail == NULL) {
       *tail = node;
+    }
   }
   return head;
 }
@@ -221,15 +168,17 @@ static void fill_global_tables_list(int lock) {
   address = map_logfile(NULL, total_size);
   head = create_list(address, sizeof(log_table_t), MAX_FREE_NODES, &tail);
 
-  if (lock)
+  if (lock) {
     pthread_mutex_lock(&global_tables_list->mutex);
+  }
 
   tail->next = global_tables_list->head;
   global_tables_list->head = head;
   global_tables_list->count += MAX_FREE_NODES;
 
-  if (lock)
+  if (lock) {
     pthread_mutex_unlock(&global_tables_list->mutex);
+  }
 }
 
 static void *background_table_alloc_thread_func(void *parm) {
@@ -238,21 +187,25 @@ static void *background_table_alloc_thread_func(void *parm) {
 
   while (TRUE) {
     s = pthread_mutex_lock(&background_table_alloc_mutex);
-    if (__glibc_unlikely(s != 0))
+    if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_mutex_lock");
+    }
 
     while (background_table_alloc == FALSE) {
-      s = pthread_cond_wait(&background_table_alloc_cond, &background_table_alloc_mutex);
-      if (__glibc_unlikely(s != 0))
+      s = pthread_cond_wait(&background_table_alloc_cond,
+                            &background_table_alloc_mutex);
+      if (__glibc_unlikely(s != 0)) {
         handle_error("pthread_cond_wait");
+      }
     }
     printf("[%s] wake up!!\n", __func__);
     fill_global_tables_list(TRUE);
     background_table_alloc = FALSE;
 
     s = pthread_mutex_unlock(&background_table_alloc_mutex);
-    if (__glibc_unlikely(s != 0))
+    if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_mutex_unlock");
+    }
   }
   return NULL;
 }
@@ -260,8 +213,9 @@ static void *background_table_alloc_thread_func(void *parm) {
 void exit_background_table_alloc_thread(void) {
   int s;
   s = pthread_cancel(background_table_alloc_thread);
-  if (__glibc_unlikely(s != 0))
+  if (__glibc_unlikely(s != 0)) {
     handle_error_en(s, "pthread_cancel");
+  }
 }
 
 static void create_global_tables_list(int count) {
@@ -278,13 +232,16 @@ static void create_global_tables_list(int count) {
     total_size = count * sizeof(log_table_t);
     address = map_logfile(NULL, total_size);
 
-    global_tables_list->head = create_list(address, sizeof(log_table_t), count, NULL);
+    global_tables_list->head =
+        create_list(address, sizeof(log_table_t), count, NULL);
     global_tables_list->count = count;
 
     /* background thread */
-    s = pthread_create(&background_table_alloc_thread, NULL, background_table_alloc_thread_func, NULL);
-    if (__glibc_unlikely(s != 0))
+    s = pthread_create(&background_table_alloc_thread, NULL,
+                       background_table_alloc_thread_func, NULL);
+    if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_create");
+    }
   }
 }
 
@@ -302,7 +259,8 @@ static void create_global_entries_list(size_t data_file_size) {
     count = data_file_size >> PAGE_SHIFT;
     entries_file_size = count * sizeof(log_entry_t);
     address = map_logfile(ENTRIES_PATH, entries_file_size);
-    global_entries_list->head = create_list(address, sizeof(log_entry_t), count, NULL);
+    global_entries_list->head =
+        create_list(address, sizeof(log_entry_t), count, NULL);
     global_entries_list->count = count;
     init_entries_lock(global_entries_list->head);
   }
@@ -315,7 +273,7 @@ static void create_global_data_list(size_t data_file_size) {
   char filename[40];
   int i;
 
-  for (i=0; i<NR_LOG_SIZES; i++) {
+  for (i = 0; i < NR_LOG_SIZES; i++) {
     global_data_list[i] = (freelist_t *)malloc(sizeof(freelist_t));
     if (__glibc_unlikely(global_data_list[i] == NULL)) {
       handle_error("malloc");
@@ -345,46 +303,6 @@ static void create_global_umas_list(void) {
   global_uma_list->head = create_list(addr, sizeof(uma_t), MAX_NR_UMAS, NULL);
   global_uma_list->count = MAX_NR_UMAS;
 }
-
-#if 0
-static void create_logs(size_t len) {
-  void *entries_addr, *data_addr, *umas_addr;
-  unsigned long logsize;
-  int nrnodes;
-
-  if (global_entries_list == NULL) {
-    /* freelist for logs */
-    global_entries_list = (freelist_t *)malloc(sizeof(freelist_t));
-    if (__glibc_unlikely(global_entries_list == NULL)) {
-      handle_error("malloc");
-    }
-    pthread_mutex_init(&global_entries_list->mutex, NULL);
-    data_addr = map_logfile(DATA_PATH, len);
-#ifdef USE_LARGE_LOG
-    nrnodes = len >> LARGE_LOG_SHIFT;
-    logsize = 1UL << LARGE_LOG_SHIFT;
-#else
-    nrnodes = len >> LOG_SHIFT;
-    logsize = 1UL << LOG_SHIFT;
-#endif
-    len = nrnodes * sizeof(log_entry_t);
-    entries_addr = map_logfile(ENTRIES_PATH, len);
-    global_entries_list->head = create_log_list(entries_addr, data_addr, nrnodes, logsize);
-    global_entries_list->nrnodes = nrnodes;
-
-    /* freelist for umas */
-    global_uma_list = (freelist_t *)malloc(sizeof(freelist_t));
-    if (__glibc_unlikely(global_uma_list == NULL)) {
-      handle_error("malloc");
-    }
-    pthread_mutex_init(&global_uma_list->mutex, NULL);
-    len = MAX_NR_UMAS * sizeof(uma_t);
-    umas_addr = map_logfile(UMAS_PATH, len);
-    global_uma_list->head = create_uma_list(umas_addr, MAX_NR_UMAS);
-    global_uma_list->nrnodes = MAX_NR_UMAS;
-  }
-}
-#endif
 
 static inline void alloc_list(freelist_t **list) {
   if (*list == NULL) {
@@ -428,13 +346,13 @@ static void fill_local_tables_list(void) {
   int s;
 
   s = pthread_mutex_lock(&global_tables_list->mutex);
-  if (__glibc_unlikely(s != 0))
+  if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_mutex_lock");
+  }
 
   count = global_tables_list->count;
 
   if (count == 0) {
-    //handle_error("global_tables_list does not have anything");
     fill_global_tables_list(FALSE);
     count = global_tables_list->count;
   }
@@ -455,21 +373,23 @@ static void fill_local_tables_list(void) {
   global_tables_list->count -= count;
   local_tables_list->count += count;
 
-  //printf("global_tables_list->count = %lu\n", global_tables_list->count);
   if (global_tables_list->count < MAX_FREE_NODES) {
     s = pthread_mutex_lock(&background_table_alloc_mutex);
-    if (__glibc_unlikely(s != 0))
+    if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_mutex_lock");
+    }
 
     background_table_alloc = TRUE;
 
     s = pthread_mutex_unlock(&background_table_alloc_mutex);
-    if (__glibc_unlikely(s != 0))
+    if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_mutex_unlock");
+    }
 
     s = pthread_cond_signal(&background_table_alloc_cond);
-    if (__glibc_unlikely(s != 0))
+    if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_cond_signal");
+    }
   }
 
   pthread_mutex_unlock(&global_tables_list->mutex);
@@ -537,7 +457,8 @@ static void fill_local_data_list(log_size_t log_size) {
   pthread_mutex_unlock(&global_data_list[log_size]->mutex);
 }
 
-static void put_log_global(freelist_t *local_list, freelist_t *global_list, int nrnodes) {
+static void put_log_global(freelist_t *local_list, freelist_t *global_list,
+                           int nrnodes) {
   list_node_t *node, *tmp_node;
   int i;
 
@@ -575,7 +496,8 @@ static void put_log_local(log_entry_t *entry, log_size_t log_size) {
   local_data_list[log_size]->count += 1;
 
   if (local_data_list[log_size]->count > MAX_FREE_NODES) {
-    put_log_global(local_data_list[log_size], global_data_list[log_size], NR_FILL_NODES);
+    put_log_global(local_data_list[log_size], global_data_list[log_size],
+                   NR_FILL_NODES);
   }
 
   entry_node = alloc_list_node();
@@ -657,7 +579,7 @@ static void *alloc_log_data(log_size_t log_size) {
 }
 
 log_table_t *alloc_log_table(log_table_t *parent, int index,
-                                       table_type_t type) {
+                             table_type_t type) {
   log_table_t *table;
   list_node_t *node;
 
@@ -731,6 +653,7 @@ log_entry_t *alloc_log_entry(uma_t *uma, log_size_t log_size) {
 void free_log_entry(log_entry_t *entry, log_size_t log_size, bool sync) {
   int s;
   entry->united = 0;
+  entry->data = NULL;
   entry->dst = NULL;
 
   if (sync) {
@@ -755,7 +678,8 @@ void release_local_list(void) {
 
   nrnodes = local_entries_list->count;
 
-  if (nrnodes == 0) return;
+  if (nrnodes == 0)
+    return;
 
   node = local_entries_list->head;
 
@@ -782,9 +706,9 @@ void release_local_list(void) {
   pthread_mutex_unlock(&global_entries_list->mutex);
 }
 
-void init_global_freelist(void) { 
-  create_global_tables_list(MAX_FREE_NODES*10);
-  create_global_entries_list(LOG_FILE_SIZE*2);
+void init_global_freelist(void) {
+  create_global_tables_list(MAX_FREE_NODES * 10);
+  create_global_entries_list(LOG_FILE_SIZE * 2);
   create_global_data_list(LOG_FILE_SIZE);
   create_global_umas_list();
 }

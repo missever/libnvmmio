@@ -6,10 +6,10 @@
 
 #include "allocator.h"
 #include "internal.h"
-#include "rbtree.h"
 #include "list.h"
-#include "uma.h"
+#include "rbtree.h"
 #include "stats.h"
+#include "uma.h"
 
 #define UMACACHE_BITS (3)
 #define UMACACHE_SIZE (1U << UMACACHE_BITS)
@@ -32,9 +32,7 @@ list_t *get_uma_list(int index) {
   return &uma_list[index];
 }
 #endif
-list_t *get_uma_list(void) {
-  return &uma_list;
-}
+list_t *get_uma_list(void) { return &uma_list; }
 
 static inline void umacache_update(unsigned long addr, uma_t *uma) {
   uma_cache[UMACACHE_HASH(addr)] = uma;
@@ -47,8 +45,7 @@ static inline uma_t *find_uma_cache(const void *addr) {
   for (i = 0; i < UMACACHE_SIZE; i++) {
     uma = uma_cache[i];
 
-    if (uma != NULL && uma->start <= addr && addr < uma->end)
-      return uma;
+    if (uma != NULL && uma->start <= addr && addr < uma->end) return uma;
   }
   return NULL;
 }
@@ -113,7 +110,6 @@ void insert_uma_rbtree(uma_t *new_uma) {
   uma_t *uma;
   int s;
 
-  // uma rbtree
   s = pthread_rwlock_wrlock(&uma_rbtree->rwlock);
   if (__glibc_unlikely(s != 0)) {
     handle_error("pthread_rwlock_wrlock");
@@ -143,30 +139,10 @@ void insert_uma_rbtree(uma_t *new_uma) {
   }
 }
 
-#if 0
 void insert_uma_syncthreads(uma_t *new_uma) {
   int index, s;
 
-  index = new_uma->id % NR_SYNC_THREADS;
-  printf("[%s] uma id = %d, index = %d\n", __func__, new_uma->id, index);
-
-  s = pthread_rwlock_wrlock(&uma_list[index].rwlock);
-  if (__glibc_unlikely(s != 0)) {
-    handle_error("pthread_rwlock_wrlock");
-  }
-
-  list_add(&new_uma->list, &uma_list[index].header);
-
-  s = pthread_rwlock_unlock(&uma_list[index].rwlock);
-  if (__glibc_unlikely(s != 0)) {
-    handle_error("pthread_rwlock_unlock");
-  }
-}
-#endif
-void insert_uma_syncthreads(uma_t *new_uma) {
-  int index, s;
-
-  //index = new_uma->id % NR_SYNC_THREADS;
+  // index = new_uma->id % NR_SYNC_THREADS;
   printf("[%s] uma id = %d\n", __func__, new_uma->id);
 
   s = pthread_rwlock_wrlock(&uma_list.rwlock);
@@ -182,13 +158,9 @@ void insert_uma_syncthreads(uma_t *new_uma) {
   }
 }
 
-void insert_uma_fdarray(int fd, uma_t *new_uma) {
-  uma_fdarray[fd] = new_uma;
-}
+void insert_uma_fdarray(int fd, uma_t *new_uma) { uma_fdarray[fd] = new_uma; }
 
-uma_t *get_uma_fdarray(int fd) {
-  return uma_fdarray[fd];
-}
+uma_t *get_uma_fdarray(int fd) { return uma_fdarray[fd]; }
 
 void delete_uma_rbtree(uma_t *uma) {
   int s;
@@ -210,8 +182,8 @@ void delete_uma_rbtree(uma_t *uma) {
 void delete_uma_syncthreads(uma_t *uma) {
   int index, s;
 
-  //index = uma->id % NR_SYNC_THREADS;
-  //printf("[%s] id = %d\n", __func__, index);
+  // index = uma->id % NR_SYNC_THREADS;
+  // printf("[%s] id = %d\n", __func__, index);
 
   s = pthread_rwlock_wrlock(&uma_list.rwlock);
   if (__glibc_unlikely(s != 0)) {
@@ -226,9 +198,7 @@ void delete_uma_syncthreads(uma_t *uma) {
   }
 }
 
-void delete_uma_fdarray(int fd) {
-  uma_fdarray[fd] = NULL;
-}
+void delete_uma_fdarray(int fd) { uma_fdarray[fd] = NULL; }
 
 void init_uma(void) {
   unsigned long i;
