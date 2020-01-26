@@ -6,7 +6,7 @@ As the name indicates, Libnvmmio is linked with applications as a library, provi
 
 ## Requirements
 1. **NVM-aware filesystem.**
-You can use Libnvmmio with any filesystem that provides ```DAX-mmap```, such as Ext4-DAX, XFS-DAX, [PMFS](https://github.com/linux-pmfs/pmfs), and [NOVA](https://github.com/NVSL/linux-nova).
+You can use Libnvmmio with any filesystem that provides ```DAX-mmap```, such as Ext4-DAX, XFS-DAX, [PMFS](https://github.com/linux-pmfs/pmfs), [NOVA](https://github.com/NVSL/linux-nova), and [SplitFS](https://github.com/utsaslab/SplitFS).
 The ```DAX-mmap``` allows Libnvmmio to map the pages of an NVMM-backed file into its address space and then access it via ```load``` and ```store``` instructions.
 Libnvmmio intercepts and replaces ```read()```/```write()``` system calls with ```load```/```store``` instructions. 
 
