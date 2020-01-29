@@ -8,9 +8,9 @@
 #include <libnvmmio.h>
 
 #define handle_error(msg) \
-	do {                    \
-		perror(msg);          \
-		exit(EXIT_FAILURE);   \
+	do { \
+		perror(msg); \
+		exit(EXIT_FAILURE); \
 	} while (0)
 
 #define FILE_PATH "/mnt/pmem/testfile"
