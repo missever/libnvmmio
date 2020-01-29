@@ -6,7 +6,7 @@ As the name indicates, Libnvmmio is linked with applications as a library, provi
 
 ## Requirements
 1. **NVM-aware filesystem.**
-You can use Libnvmmio with any filesystem that provides ```DAX-mmap```, such as Ext4-DAX, XFS-DAX, [PMFS](https://github.com/linux-pmfs/pmfs), [NOVA](https://github.com/NVSL/linux-nova), and [SplitFS](https://github.com/utsaslab/SplitFS).
+You can use Libnvmmio with any filesystem that provides ```DAX-mmap```, such as Ext4-DAX, XFS-DAX, [PMFS](https://github.com/linux-pmfs/pmfs), [NOVA](https://github.com/NVSL/linux-nova), [SplitFS](https://github.com/utsaslab/SplitFS) and so on.
 The ```DAX-mmap``` allows Libnvmmio to map the pages of an NVMM-backed file into its address space and then access it via ```load``` and ```store``` instructions.
 Libnvmmio intercepts and replaces ```read()```/```write()``` system calls with ```load```/```store``` instructions. 
 
@@ -17,3 +17,25 @@ It also uses ```pmem_flush()``` to make metadata updates permanent.
 PMDK is a well-proven library.
 It provides optimizations for parallelisms such as SSE2 and MMX.
 It will also support ARM processors as well as Intel processors.
+
+## Getting started with Libnvmmio
+1. **Build Libnvmmio.**
+   ```
+   $ git clone https://github.com/review-anonymous/libnvmmio.git
+   $ cd libnvmmio/src
+   $ make
+   ```
+2. **Write your application.**
+There are simple examples in the [example directory](examples). Those examples will help you understand how to use Libnvmmio.
+Note the following:
+   * Include ```libnvmmio.h``` header file in the source file with the file IO code.
+   * Use the ```O_ATOMIC``` flag when opening a file for which you want to guarantee atomic-durability.
+
+3. **Set ```PMEM_PATH``` variable.**
+Libnvmmio has to know where the persistent area is for logging.
+So you have to tell Libnvmmio which path an nvm-aware filesystem is mounted on.
+   ```
+   $ export PMEM_PATH=/mnt/pmem
+   ```
+   
+4. **Compile and run your application.**
