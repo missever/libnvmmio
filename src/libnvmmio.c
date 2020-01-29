@@ -200,14 +200,20 @@ static void sync_uma(uma_t *uma) {
 
 void cleanup_handler(void) {
   exit_background_table_alloc_thread();
+	cleanup_logs();
+#ifdef MEASURE_TIME
   report_time();
+#endif /* MEASURE_TIME */
   return;
 }
 
 void init_libnvmmio(void) {
   if (__sync_bool_compare_and_swap(&initialized, false, true)) {
+#ifdef MEASURE_TIME
     init_timer();
+#endif /* MEASURE_TIME */
 
+    init_env();
     init_global_freelist();
     init_radixlog();
     init_uma();
@@ -920,6 +926,8 @@ int nvmsync_uma(void *addr, size_t len, int flags, uma_t *uma) {
   int s, ret;
   bool sync = false;
 
+	printf("[%s] uma id=%d\n", __func__, uma->id);
+
   LIBNVMMIO_INIT_TIME(fsync_time);
   LIBNVMMIO_START_TIME(fsync_t, fsync_time);
 
@@ -996,9 +1004,6 @@ nvmsync_out:
 
 int nvmsync(void *addr, size_t len, int flags) {
   uma_t *uma;
-  unsigned long new_epoch;
-  int s, ret;
-  bool sync = false;
 
   len = (len + (~PAGE_MASK)) & PAGE_MASK;
   uma = find_uma(addr);
@@ -1006,66 +1011,7 @@ int nvmsync(void *addr, size_t len, int flags) {
     handle_error("find_uma() failed");
   }
 
-  s = pthread_rwlock_wrlock(uma->rwlockp);
-  if (__glibc_unlikely(s != 0)) {
-    handle_error("pthread_rwlock_wrlock");
-  }
-
-  new_epoch = uma->epoch + 1;
-  uma->epoch = new_epoch;
-  nvmmio_flush(&(uma->epoch), sizeof(unsigned long), true);
-
-  if (uma->write > 0) {
-    sync = true;
-  }
-
-  /* Hybrid Logging */
-#if 1
-  log_policy_t new_policy;
-  unsigned long total, write_ratio;
-
-  total = uma->read + uma->write;
-
-  if (total > 0) {
-    write_ratio = uma->write / total * 100;
-
-    if (write_ratio > HYBRID_WRITE_RATIO) {
-      new_policy = REDO;
-    } else {
-      new_policy = UNDO;
-    }
-
-    uma->read = 0;
-    uma->write = 0;
-
-    if (uma->policy != new_policy) {
-      flags &= ~MS_ASYNC;
-      flags |= MS_SYNC;
-      uma->policy = new_policy;
-
-      if (new_policy == UNDO)
-        printf("[%s] REDO->UNDO\n", __func__);
-      else
-        printf("[%s] UNDO->REDO\n", __func__);
-    }
-  }
-#endif
-
-  if (sync) {
-    if (flags & MS_SYNC) {
-      nvmsync_sync(addr, len, new_epoch);
-    }
-  }
-
-  s = pthread_rwlock_unlock(uma->rwlockp);
-  if (__glibc_unlikely(s != 0)) {
-    handle_error("pthread_rwlock_unlock");
-  }
-
-  ret = 0;
-
-nvmsync_out:
-  return ret;
+	return nvmsync_uma(addr, len, flags, uma);
 }
 
 int nvmemcmp(const void *s1, const void *s2, size_t n) {
@@ -1356,19 +1302,22 @@ int nvopen(const char *path, int flags, ...) {
 
   /* TODO: Implement O_NONBLOCK and O_NODELAY */
 
-  if (!(flags & O_ATOMIC)) return open(path, flags);
+  if (!(flags & O_ATOMIC)) {
+    return open(path, flags);
+  }
 
   if (flags & O_PATH) {
     return open(path, flags);
   }
 
-  s = stat(path, &statbuf);
-  if (__glibc_unlikely(s != 0)) handle_error("stat");
-
-  if (S_ISDIR(statbuf.st_mode) || strncmp(path, "/dev", 4) == 0) {
-    isdir = TRUE;
+  if (stat(path, &statbuf) != 0) {
+    printf("[%s]: stat failed to Path:%s errno:%d\n", __func__, path, errno);
   } else {
-    fd_size = statbuf.st_size;
+    if (S_ISDIR(statbuf.st_mode) || strncmp(path, "/dev", 4) == 0) {
+      isdir = 1;
+    } else {
+      fd_size = statbuf.st_size;
+    }
   }
 
   if (isdir == 1 || strncmp(path, "/dev", 4) == 0 ||

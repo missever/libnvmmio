@@ -27,8 +27,10 @@ struct log_entry_struct *alloc_log_entry(struct mmap_area_struct *uma,
 void free_log_entry(struct log_entry_struct *entry, log_size_t log_size,
                     bool sync);
 void release_local_list(void);
+void init_env(void);
 void init_global_freelist(void);
 
 void exit_background_table_alloc_thread(void);
+void cleanup_logs(void);
 
 #endif /* _LIBNVMMIO_ALLOCATOR_H */

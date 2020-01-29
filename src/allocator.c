@@ -6,6 +6,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
+#include <dirent.h>
 
 #include "allocator.h"
 #include "internal.h"
@@ -33,6 +35,8 @@ static __thread freelist_t *local_data_list[NR_LOG_SIZES] = {NULL, };
 static __thread list_node_t *local_node_head = NULL;
 
 static int umaid = -1;
+static char *pmem_path;
+static unsigned long libnvmmio_pid;
 
 static inline int get_uma_id(void) {
   int old, new;
@@ -46,6 +50,43 @@ static inline int get_uma_id(void) {
 
   return new;
 }
+
+static void rmlogs(char *path) {
+	DIR * dir_ptr = NULL;
+	struct dirent *file = NULL;
+	struct stat buf;
+	char filename[1024];
+	int s;
+
+	dir_ptr = opendir(path);
+	if (__glibc_unlikely(dir_ptr == NULL)) {
+		handle_error("opendir");
+	}
+
+	while ((file = readdir(dir_ptr)) != NULL) {
+		if (strcmp(file->d_name, ".") == 0 || strcmp(file->d_name, "..") == 0) {
+			continue;
+		}
+
+		sprintf(filename, "%s/%s", path, file->d_name);
+
+		s = unlink(filename);
+		if (__glibc_unlikely(s != 0)) {
+			handle_error("unlink");
+		}
+	}
+
+	s = closedir(dir_ptr);
+	if (__glibc_unlikely(s != 0)) {
+		handle_error("closedir");
+	}
+
+	s = rmdir(path);
+	if (__glibc_unlikely(s != 0)) {
+		handle_error("rmdir");
+	}
+}
+
 
 static char *size2str(size_t size, char *buf) {
   char unit[3];
@@ -249,6 +290,7 @@ static void create_global_entries_list(size_t data_file_size) {
   void *address;
   unsigned long count;
   size_t entries_file_size;
+  char filename[40];
 
   if (global_entries_list == NULL) {
     global_entries_list = (freelist_t *)malloc(sizeof(freelist_t));
@@ -258,7 +300,8 @@ static void create_global_entries_list(size_t data_file_size) {
     pthread_mutex_init(&global_entries_list->mutex, NULL);
     count = data_file_size >> PAGE_SHIFT;
     entries_file_size = count * sizeof(log_entry_t);
-    address = map_logfile(ENTRIES_PATH, entries_file_size);
+    sprintf(filename, ENTRIES_PATH, pmem_path, libnvmmio_pid);
+    address = map_logfile(filename, entries_file_size);
     global_entries_list->head =
         create_list(address, sizeof(log_entry_t), count, NULL);
     global_entries_list->count = count;
@@ -280,7 +323,7 @@ static void create_global_data_list(size_t data_file_size) {
     }
     pthread_mutex_init(&global_data_list[i]->mutex, NULL);
 
-    sprintf(filename, DATA_PATH, i);
+    sprintf(filename, DATA_PATH, pmem_path, libnvmmio_pid, i);
     address = map_logfile(filename, data_file_size);
     log_size = 1UL << LOG_SHIFT(i);
     count = data_file_size >> LOG_SHIFT(i);
@@ -292,6 +335,7 @@ static void create_global_data_list(size_t data_file_size) {
 static void create_global_umas_list(void) {
   size_t len;
   void *addr;
+  char filename[40];
 
   global_uma_list = (freelist_t *)malloc(sizeof(freelist_t));
   if (__glibc_unlikely(global_uma_list == NULL)) {
@@ -299,7 +343,8 @@ static void create_global_umas_list(void) {
   }
   pthread_mutex_init(&global_uma_list->mutex, NULL);
   len = MAX_NR_UMAS * sizeof(uma_t);
-  addr = map_logfile(UMAS_PATH, len);
+  sprintf(filename, UMAS_PATH, pmem_path, libnvmmio_pid);
+  addr = map_logfile(filename, len);
   global_uma_list->head = create_list(addr, sizeof(uma_t), MAX_NR_UMAS, NULL);
   global_uma_list->count = MAX_NR_UMAS;
 }
@@ -706,9 +751,41 @@ void release_local_list(void) {
   pthread_mutex_unlock(&global_entries_list->mutex);
 }
 
+void init_env(void) {
+  char dirpath[40];
+  size_t len;
+	int s;
+
+  pmem_path = getenv("PMEM_PATH");
+  if (__glibc_unlikely(pmem_path == NULL)) {
+    handle_error("PMEM_PATH is NULL.");
+  }
+
+  len = strlen(pmem_path);
+
+  if (pmem_path[len - 1] == '/') {
+    pmem_path[len - 1] = '\0';
+  }
+
+  libnvmmio_pid = getpid();
+	
+	sprintf(dirpath, DIR_PATH, pmem_path, libnvmmio_pid);
+	s = mkdir(dirpath, 0700);
+	if (__glibc_unlikely(s != 0)) {
+		handle_error("mkdir");
+	}
+}
+
 void init_global_freelist(void) {
   create_global_tables_list(MAX_FREE_NODES * 10);
   create_global_entries_list(LOG_FILE_SIZE * 2);
   create_global_data_list(LOG_FILE_SIZE);
   create_global_umas_list();
+}
+
+void cleanup_logs(void) {
+	char log_dir[1024];
+	sprintf(log_dir, DIR_PATH, pmem_path, libnvmmio_pid);
+	rmlogs(log_dir);
+	printf("[%s] removed logs\n", __func__);
 }

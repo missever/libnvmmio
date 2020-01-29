@@ -77,9 +77,10 @@ typedef enum {
 #define NR_FILL_NODES (MAX_FREE_NODES >> 1) /* 1024 */
 #define LOG_FILE_SIZE (1UL << 32)
 
-#define DATA_PATH "/mnt/pmem_emul/libnvmmio-data-%d.log"
-#define ENTRIES_PATH "/mnt/pmem_emul/libnvmmio-entries.log"
-#define UMAS_PATH "/mnt/pmem_emul/libnvmmio-umas.log"
+#define DIR_PATH    "%s/.libnvmmio-%lu"
+#define DATA_PATH    "%s/.libnvmmio-%lu/data-%d.log"
+#define ENTRIES_PATH "%s/.libnvmmio-%lu/entries.log"
+#define UMAS_PATH    "%s/.libnvmmio-%lu/umas.log"
 
 // io.h
 #define IO_MAP_SIZE (1UL << 32) /* 1GB */
