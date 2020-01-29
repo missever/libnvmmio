@@ -25,7 +25,7 @@ It will also support ARM processors as well as Intel processors.
    $ cd libnvmmio/src
    $ make
    ```
-2. **Write your application.**
+2. **Write and compile your application.**
 There are simple examples in the [example directory](examples). Those examples will help you understand how to use Libnvmmio.
 Note the following:
    * Include ```libnvmmio.h``` header file in the source file with the file IO code.
@@ -38,4 +38,4 @@ So you have to tell Libnvmmio which path an nvm-aware filesystem is mounted on.
    $ export PMEM_PATH=/mnt/pmem
    ```
    
-4. **Compile and run your application.**
+4. **Run your application.**
