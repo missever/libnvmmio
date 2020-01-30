@@ -1,3 +1,7 @@
+# Notice
+We are updating this repository to improve the readability of our source code.
+We will also add some examples that use Libnvmmio to help you understand how to use Libnvmmio.
+
 # Libnvmmio
 We have designed and implemented *Libnvmmio* to maximize the IO performance of non-volatile main memory (NVMM) systems. 
 The purpose of Libnvmmio is eliminating software overhead, providing low-latency, scalable file IO while ensuring data-atomicity.
