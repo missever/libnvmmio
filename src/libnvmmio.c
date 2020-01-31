@@ -20,7 +20,7 @@
 #include "allocator.h"
 #include "internal.h"
 #include "list.h"
-#include "stats.h"
+#include "debug.h"
 
 #define PATH_SIZE 64
 #define NthM(x) (67108864 << x)
@@ -201,17 +201,14 @@ static void sync_uma(uma_t *uma) {
 void cleanup_handler(void) {
   exit_background_table_alloc_thread();
 	cleanup_logs();
-#ifdef MEASURE_TIME
-  report_time();
-#endif /* MEASURE_TIME */
+
+	LIBNVMMIO_REPORT_TIME();
   return;
 }
 
 void init_libnvmmio(void) {
   if (__sync_bool_compare_and_swap(&initialized, false, true)) {
-#ifdef MEASURE_TIME
-    init_timer();
-#endif /* MEASURE_TIME */
+		LIBNVMMIO_INIT_TIMER();
 
     init_env();
     init_global_freelist();
@@ -227,7 +224,7 @@ static inline void *get_base_mmap_addr(void *addr, size_t n) {
   void *old, *new;
 
   if (addr != NULL) {
-    printf("[%s] warning: addr is not NULL.\n", __func__);
+    LIBNVMMIO_DEBUG("warning: addr is not NULL");
     return addr;
   }
 
@@ -259,7 +256,7 @@ static void *sync_thread_func(void *parm) {
   uma_t *uma;
   uma = (uma_t *)parm;
 
-  printf("[%s] %d uma thread start on %d\n", __func__, uma->id, sched_getcpu());
+  LIBNVMMIO_DEBUG("%d uma thread start on %d", uma->id, sched_getcpu());
 
   while (TRUE) {
     usleep(SYNC_PERIOD);
@@ -284,7 +281,7 @@ void *nvmmap(void *addr, size_t len, int prot, int flags, int fd,
   struct stat sb;
   int s;
 
-  printf("[%s] fd=%d\n", __func__, fd);
+  LIBNVMMIO_DEBUG("fd=%d", fd);
 
   if (__glibc_unlikely(!initialized)) {
     init_libnvmmio();
@@ -315,10 +312,13 @@ void *nvmmap(void *addr, size_t len, int prot, int flags, int fd,
   uma->offset = offset;
   uma->epoch = 1;
   uma->policy = DEFAULT_POLICY;
-  if (uma->policy == UNDO)
-    printf("[%s] policy = UNDO\n", __func__);
-  else
-    printf("[%s] policy = REDO\n", __func__);
+
+  if (uma->policy == UNDO) {
+    LIBNVMMIO_DEBUG("policy = UNDO");
+	}
+  else {
+    LIBNVMMIO_DEBUG("policy = REDO");
+	}
 
   create_sync_thread(uma);
 
@@ -926,7 +926,7 @@ int nvmsync_uma(void *addr, size_t len, int flags, uma_t *uma) {
   int s, ret;
   bool sync = false;
 
-	printf("[%s] uma id=%d\n", __func__, uma->id);
+	LIBNVMMIO_DEBUG("uma id=%d", uma->id);
 
   LIBNVMMIO_INIT_TIME(fsync_time);
   LIBNVMMIO_START_TIME(fsync_t, fsync_time);
@@ -975,10 +975,12 @@ int nvmsync_uma(void *addr, size_t len, int flags, uma_t *uma) {
       flags |= MS_SYNC;
       uma->policy = new_policy;
 
-      if (new_policy == UNDO)
-        printf("[%s] REDO->UNDO\n", __func__);
-      else
-        printf("[%s] UNDO->REDO\n", __func__);
+      if (new_policy == UNDO) {
+        LIBNVMMIO_DEBUG("REDO->UNDO");
+			}
+      else {
+        LIBNVMMIO_DEBUG("UNDO->REDO");
+			}
     }
   }
 #endif
@@ -1201,7 +1203,7 @@ static inline void trunc_fit_fd(int fd) {
 
   if (written_file_size < current_file_size) {
     if (ftruncate(fd, written_file_size) < 0) {
-      printf("[%s]: ftruncate error\n", __func__);
+      LIBNVMMIO_DEBUG("ftruncate error");
     } else {
       fd_table[fd_indirection[fd]].current_file_size = written_file_size;
     }
@@ -1213,7 +1215,7 @@ static inline size_t trunc_expand_fd(int fd, size_t current_file_size) {
   int indirectedFd = fd_indirection[fd];
   if (current_file_size < IO_MAP_SIZE) {
     if (posix_fallocate(indirectedFd, 0, IO_MAP_SIZE) < 0) {
-      printf("[%s]: posix_fallocate error\n", __func__);
+      LIBNVMMIO_DEBUG("posix_fallocate error");
     } else {
       fd_table[indirectedFd].current_file_size = IO_MAP_SIZE;
       ret = IO_MAP_SIZE;
@@ -1226,7 +1228,7 @@ static inline size_t trunc_expand_fd(int fd, size_t current_file_size) {
     ret += add_file_size;
     if (posix_fallocate(indirectedFd, fd_table[indirectedFd].current_file_size,
                         add_file_size) < 0) {
-      printf("[%s]: posix_fallocate error\n", __func__);
+      LIBNVMMIO_DEBUG("posix_fallocate error");
     } else {
       fd_table[indirectedFd].increaseCount++;
       fd_table[indirectedFd].current_file_size = ret;
@@ -1239,9 +1241,9 @@ static inline uma_t *expand_remap_fd(int fd, size_t current_file_size) {
   int indirectedFd = fd_indirection[fd];
   size_t ret = trunc_expand_fd(fd, current_file_size);
 
-  printf("[%s]:addr:%ld, len:%ld\n", __func__,
-         (long int)fd_table[indirectedFd].addr,
-         fd_table[indirectedFd].written_file_size);
+  LIBNVMMIO_DEBUG("addr:%ld, len:%ld",
+								 (long int)fd_table[indirectedFd].addr,
+								 fd_table[indirectedFd].written_file_size);
 
   nvmsync(fd_table[indirectedFd].addr, fd_table[indirectedFd].written_file_size,
           MS_SYNC);
@@ -1256,7 +1258,7 @@ static inline uma_t *expand_remap_fd(int fd, size_t current_file_size) {
     fd_table[indirectedFd].mapped_size = ret;
     fd_table[indirectedFd].fd_uma = find_uma(fd_table[indirectedFd].addr);
   } else {
-    printf("[%s]: Failed!!!\n", __func__);
+    LIBNVMMIO_DEBUG("Failed!!!");
   }
   return fd_table[indirectedFd].fd_uma;
 }
@@ -1278,8 +1280,7 @@ static inline void sanitize_flags(int *flags) {
   if (!(*flags & O_RDWR)) {
     if (!(*flags & O_WRONLY)) {
       if (!*flags & O_RDONLY) {
-        printf("[%s]: open should include one of O_WRONLY, O_RDWR, O_RDONLY",
-               __func__);
+        LIBNVMMIO_DEBUG("open should include one of O_WRONLY, O_RDWR, O_RDONLY");
       }
       *flags ^= O_RDONLY;
       *flags |= O_RDWR;
@@ -1311,7 +1312,7 @@ int nvopen(const char *path, int flags, ...) {
   }
 
   if (stat(path, &statbuf) != 0) {
-    printf("[%s]: stat failed to Path:%s errno:%d\n", __func__, path, errno);
+    LIBNVMMIO_DEBUG("stat failed to Path:%s errno:%d", path, errno);
   } else {
     if (S_ISDIR(statbuf.st_mode) || strncmp(path, "/dev", 4) == 0) {
       isdir = 1;
@@ -1382,8 +1383,7 @@ int nvopen(const char *path, int flags, ...) {
     fd_table[openedFd].open++;
     if (lastFd < openedFd) lastFd = openedFd;
   } else {
-    printf("[%s]: open failed for %s fd:%d errno:%d\n", __func__, path, fd,
-           errno);
+    LIBNVMMIO_DEBUG("open failed for %s fd:%d errno:%d\n", path, fd, errno);
   }
   return fd;
 }
@@ -1419,7 +1419,7 @@ int nvclose(int fd) {
           fd_indirection[fd_indirection[fd]] == 0) {
         if (fd_table[fd_indirection[fd]].open <= 2) {
           fd_table[fd].dupfd = 0;
-          printf("goto\n");
+          LIBNVMMIO_DEBUG("goto");
           goto removeOriginalFd;
         } else
           fd_table[fd_indirection[fd]].open--;
@@ -1483,9 +1483,9 @@ static inline ssize_t pwriteToMap(int fd, const void *buf, size_t cnt,
     long long int required_size =
         cnt + (dst - fd_table[fd_indirection[fd]].addr);
     if (required_size > fd_table[fd_indirection[fd]].current_file_size) {
-      printf("[%s]: call expand remap fd current size:%ld required size:%lld\n",
-             __func__, fd_table[fd_indirection[fd]].current_file_size,
-             required_size);
+      LIBNVMMIO_DEBUG("call expand remap fd current size:%ld required size:%lld",
+                    fd_table[fd_indirection[fd]].current_file_size,
+                    required_size);
       dst_uma = expand_remap_fd(fd, required_size);
       dst = get_fd_addr_cur(
           fd);  // required_size + fd_table[fd_indirection[fd]].addr;
@@ -1494,8 +1494,7 @@ static inline ssize_t pwriteToMap(int fd, const void *buf, size_t cnt,
 
     nvmemcpy_write(dst, buf, cnt, dst_uma);
   } else {
-    printf("[%s]: dst_uma for fd %d->%d  doesn't exist\n", __func__, fd,
-           fd_indirection[fd]);
+    LIBNVMMIO_DEBUG("dst_uma for fd %d->%d  doesn't exist", fd, fd_indirection[fd]);
   }
   return cnt;
 }
@@ -1773,7 +1772,7 @@ int nvfdatasync(int fd) {
       // printf(" errno:%d\n", errno);
       return ret;
   }
-  printf("\n\n%s called fd:%d\n\n", __func__, fd);
+  LIBNVMMIO_DEBUG("fd:%d", fd);
   return nvfsync(fd);
 }
 
@@ -1834,7 +1833,7 @@ int nvfstat(int fd, struct stat *statbuf) {
 int nvsync_file_range(int fd, off64_t offset, off64_t nbytes,
                       unsigned int flags) {
   trunc_fit_fd(fd);
-  printf("[%s]:addr:%ld, len:%ld\n", __func__, (long int)fd_table[fd].addr,
+  LIBNVMMIO_DEBUG("addr:%ld, len:%ld", (long int)fd_table[fd].addr,
          fd_table[fd].written_file_size);
   return nvmsync(fd_table[fd_indirection[fd]].addr + offset, nbytes, MS_ASYNC);
 }
@@ -1843,7 +1842,7 @@ int nvfallocate(int fd, int mode, off_t offset, off_t len) {
   // TODO: zero out unwritten area to end of file
   off_t required_len = offset + len;
   size_t current_file_size = fd_table[fd_indirection[fd]].current_file_size;
-  printf("\n[%s]\n\n", __func__);
+  LIBNVMMIO_DEBUG("");
 
   if (current_file_size < required_len) {
     int ret = fallocate(fd, mode, offset, len);

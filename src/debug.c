@@ -1,7 +1,9 @@
-#include "stats.h"
 #include <sched.h>
 #include <unistd.h>
+
 #include "internal.h"
+#include "debug.h"
+
 #define BILLION 1000000000L;
 
 const char *func_name[NR_FUNCS] = {

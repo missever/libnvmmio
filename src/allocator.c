@@ -11,7 +11,7 @@
 
 #include "allocator.h"
 #include "internal.h"
-#include "stats.h"
+#include "debug.h"
 
 typedef struct freelist_struct {
   list_node_t *head;
@@ -136,6 +136,8 @@ static void *map_logfile(const char *path, size_t len) {
     handle_error("mmap");
   }
 
+	LIBNVMMIO_DEBUG("file:%s, size:%s", path, size2str(len, buf));
+
   return addr;
 }
 
@@ -224,7 +226,7 @@ static void fill_global_tables_list(int lock) {
 
 static void *background_table_alloc_thread_func(void *parm) {
   int s;
-  printf("[%s] table_alloc_thread start on %d\n", __func__, sched_getcpu());
+  LIBNVMMIO_DEBUG("table_alloc_thread start on %d", sched_getcpu());
 
   while (TRUE) {
     s = pthread_mutex_lock(&background_table_alloc_mutex);
@@ -239,7 +241,7 @@ static void *background_table_alloc_thread_func(void *parm) {
         handle_error("pthread_cond_wait");
       }
     }
-    printf("[%s] wake up!!\n", __func__);
+    LIBNVMMIO_DEBUG("wake up!!");
     fill_global_tables_list(TRUE);
     background_table_alloc = FALSE;
 
@@ -787,5 +789,5 @@ void cleanup_logs(void) {
 	char log_dir[1024];
 	sprintf(log_dir, DIR_PATH, pmem_path, libnvmmio_pid);
 	rmlogs(log_dir);
-	printf("[%s] removed logs\n", __func__);
+	LIBNVMMIO_DEBUG("removed logs");
 }

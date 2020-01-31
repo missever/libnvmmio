@@ -8,8 +8,8 @@
 #include "internal.h"
 #include "list.h"
 #include "rbtree.h"
-#include "stats.h"
 #include "uma.h"
+#include "debug.h"
 
 #define UMACACHE_BITS (3)
 #define UMACACHE_SIZE (1U << UMACACHE_BITS)
@@ -143,7 +143,7 @@ void insert_uma_syncthreads(uma_t *new_uma) {
   int index, s;
 
   // index = new_uma->id % NR_SYNC_THREADS;
-  printf("[%s] uma id = %d\n", __func__, new_uma->id);
+  LIBNVMMIO_DEBUG("uma id = %d", new_uma->id);
 
   s = pthread_rwlock_wrlock(&uma_list.rwlock);
   if (__glibc_unlikely(s != 0)) {

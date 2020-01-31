@@ -2,7 +2,7 @@
 #include "radixlog.h"
 #include "allocator.h"
 #include "internal.h"
-#include "stats.h"
+#include "debug.h"
 
 extern free_tables_t *global_tables_list;
 static log_table_t *lgd = NULL;
