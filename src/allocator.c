@@ -54,7 +54,6 @@ static inline int get_uma_id(void) {
 static void rmlogs(char *path) {
 	DIR * dir_ptr = NULL;
 	struct dirent *file = NULL;
-	struct stat buf;
 	char filename[1024];
 	int s;
 
@@ -88,6 +87,7 @@ static void rmlogs(char *path) {
 }
 
 
+#ifdef _LIBNVMMIO_DEBUG
 static char *size2str(size_t size, char *buf) {
   char unit[3];
 
@@ -108,12 +108,15 @@ static char *size2str(size_t size, char *buf) {
   sprintf(buf, "%lu%s", size, unit);
   return buf;
 }
+#endif /* _LIBNVMMIO_DEBUG */
 
 static void *map_logfile(const char *path, size_t len) {
   void *addr;
   int fd, s;
-  char buf[10];
   int flags;
+#ifdef _LIBNVMMIO_DEBUG
+  char buf[10];
+#endif /* LIBNVMMIO_DEBUG */
 
   if (path == NULL) {
     fd = -1;
@@ -200,10 +203,8 @@ static list_node_t *create_list(void *address, size_t size, unsigned long count,
 }
 
 static void fill_global_tables_list(int lock) {
-  list_node_t *node;
   list_node_t *head;
   list_node_t *tail;
-  unsigned long count, i;
   size_t total_size;
   void *address;
 
@@ -224,7 +225,7 @@ static void fill_global_tables_list(int lock) {
   }
 }
 
-static void *background_table_alloc_thread_func(void *parm) {
+static void *background_table_alloc_thread_func(__attribute__((unused))void *parm) {
   int s;
   LIBNVMMIO_DEBUG("table_alloc_thread start on %d", sched_getcpu());
 
@@ -527,8 +528,7 @@ static void put_log_global(freelist_t *local_list, freelist_t *global_list,
 }
 
 static void put_log_local(log_entry_t *entry, log_size_t log_size) {
-  list_node_t *data_node, *entry_node, *node, *tmp_node;
-  int i;
+  list_node_t *data_node, *entry_node;
 
   data_node = alloc_list_node();
   data_node->ptr = entry->data;

@@ -1,15 +1,13 @@
-OBJECTS = main.o
+CC = gcc
+OBJECTS = $(patsubst %.c, %.o, $(wildcard *.c))
 TARGET = seqwrite
-CFLAGS = -g
 LIBS = -lnvmmio -lpthread -lpmem
 LIBPATH = -L../../src
-CPPPATH = -I../../src
+INCLUDE = -I../../src
+CFLAGS = -g $(INCLUDE)
 
 $(TARGET):$(OBJECTS)
 	gcc -o $@ $^ $(CFLAGS) $(LIBS) $(LIBPATH)
-
-.c.o:
-	gcc -c $< $(CPPPATH)
 
 clean:
 	rm -f $(TARGET) $(OBJECTS)

@@ -1,14 +1,15 @@
-OBJECTS = libnvmmio.o radixlog.o uma.o allocator.o rbtree.o debug.o
+CC = gcc
+CFLAGS = -W -Wall -g
+OBJECTS = $(patsubst %.c, %.o, $(wildcard *.c))
 TARGET = libnvmmio.a
-#CFLAGS = -lpthread -lpmem -g -D_LIBNVMMIO_DEBUG
-#CFLAGS = -lpthread -lpmem -g -D_LIBNVMMIO_TIME
-CFLAGS = -lpthread -lpmem -g
 
-$(TARGET):$(OBJECTS)
-	ar rscv $@ $^
+#CFLAGS += -D_LIBNVMMIO_DEBUG
+CFLAGS += -D_LIBNVMMIO_TIME
 
-.c.o:
-	gcc -c $< $(CFLAGS)
+all : $(TARGET)
+
+$(TARGET) : $(OBJECTS)
+	$(AR) rscv $@ $^
 
 clean:
-	rm -f $(TARGET) $(OBJECTS)
+	$(RM) $(TARGET) $(OBJECTS)

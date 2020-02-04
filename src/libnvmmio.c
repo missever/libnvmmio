@@ -125,13 +125,13 @@ static inline void init_base_address(void) {
     }
 
     base_mmap_addr = (void *)(addr - (1UL << 38)); /* 256 GB */
-    base_mmap_addr = ALIGN_TABLE(base_mmap_addr + TABLE_SIZE);
+    base_mmap_addr = ALIGN_TABLE((base_mmap_addr + TABLE_SIZE));
     munmap(addr, PAGE_SIZE);
   }
 }
 
 static void sync_uma(uma_t *uma) {
-  unsigned long address, len, current_epoch, nrpages, start, end, i;
+  unsigned long address, current_epoch, end, i;
   unsigned long table_size = 1UL << 21;
   unsigned long nrlogs;
   log_table_t *table;
@@ -230,7 +230,7 @@ static inline void *get_base_mmap_addr(void *addr, size_t n) {
 
   do {
     old = base_mmap_addr;
-    new = (void *)ALIGN_TABLE(base_mmap_addr + (n + TABLE_SIZE));
+    new = (void *)ALIGN_TABLE((base_mmap_addr + (n + TABLE_SIZE)));
   } while (!__sync_bool_compare_and_swap(&base_mmap_addr, old, new));
 
   return old;
@@ -453,9 +453,9 @@ static void nvmemcpy_read_redo(void *dest, const void *src,
   log_entry_t *entry;
   void *req_start, *req_end, *log_start, *log_end, *overwrite_dest;
   unsigned long req_addr, req_offset, req_len, overwrite_len;
-  unsigned long next_page_addr, next_len, next_table_addr, next_table_len;
+  unsigned long next_page_addr, next_len, next_table_addr, next_table_len, n;
   unsigned long index;
-  int s, status, n;
+  int s;
   log_size_t log_size;
 
   LIBNVMMIO_INIT_TIME(nvmemcpy_read_redo_time);
@@ -463,7 +463,7 @@ static void nvmemcpy_read_redo(void *dest, const void *src,
 
   nvmemcpy_memcpy(dest, src, record_size);
 
-  n = (int)record_size;
+  n = (unsigned long)record_size;
   req_addr = (unsigned long)src;
 
   while (n > 0) {
@@ -567,10 +567,9 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
   void *log_start, *log_end;
   void *prev_log_start, *prev_log_end;
   size_t next_len, req_len, overwrite_len;
-  unsigned long index, log_mask;
+  unsigned long index, n;
   log_size_t log_size;
-  int s, n;
-  void *test_addr;
+  int s;
 
   LIBNVMMIO_INIT_TIME(nvmemcpy_write_time);
   LIBNVMMIO_START_TIME(nvmemcpy_write_t, nvmemcpy_write_time);
@@ -585,7 +584,7 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
 
   destination = dst;
   source = src;
-  n = (int)record_size;
+  n = (unsigned long)record_size;
   req_addr = (unsigned long)dst;
 
   table = get_log_table(req_addr);
@@ -1268,10 +1267,9 @@ int nvcreat(const char *filename, mode_t mode) {
   int fd = creat(filename, mode);
 
   if (fd >= 0) {
-    void *addr =
-        nvmmap(NULL, IO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *addr = nvmmap(NULL, IO_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
-    if (addr >= 0) map_fd_addr(fd, addr, 0, 0, IO_MAP_SIZE, filename);
+    if (addr != MAP_FAILED) map_fd_addr(fd, addr, 0, 0, IO_MAP_SIZE, filename);
   }
   return fd;
 }
@@ -1299,7 +1297,7 @@ int nvopen(const char *path, int flags, ...) {
   struct stat statbuf;
   off_t fd_size = 0;
   int isdir = FALSE;
-  int fd, s;
+  int fd;
 
   /* TODO: Implement O_NONBLOCK and O_NODELAY */
 
@@ -1375,9 +1373,8 @@ int nvopen(const char *path, int flags, ...) {
       openedFd = fd;
       mapped_size = trunc_expand_fd(fd, fd_size);
       fd_size = mapped_size;
-      addr =
-          nvmmap(NULL, mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-      if (addr >= 0)
+      addr = nvmmap(NULL, mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+      if (addr != MAP_FAILED)
         map_fd_addr(fd, addr, fd_size, written_size, mapped_size, path);
     }
     fd_table[openedFd].open++;
@@ -1404,6 +1401,7 @@ void *unmap_thread(void *vargp) {
   nvmsync(fd_table[fd].addr, fd_table[fd].written_file_size, MS_SYNC);
   nvmunmap_uma(fd_table[fd].addr, fd_table[fd].mapped_size, get_fd_uma(fd));
   fd_table[fd].addr = NULL;
+	return NULL;
 }
 
 int nvclose(int fd) {
@@ -1434,10 +1432,10 @@ int nvclose(int fd) {
     }
   } else if (fd_table[fd].dup == 0) {
     void *addr;
-    size_t mapped_size;
+    //size_t mapped_size;
   removeOriginalFd:
     addr = fd_table[fd_indirection[fd]].addr;
-    mapped_size = fd_table[fd_indirection[fd]].mapped_size;
+    //mapped_size = fd_table[fd_indirection[fd]].mapped_size;
     trunc_fit_fd(fd);
     close_sync_thread(fd_table[fd_indirection[fd]].fd_uma);
 
@@ -1480,15 +1478,14 @@ static inline ssize_t pwriteToMap(int fd, const void *buf, size_t cnt,
   if (dst_uma) {
     // TODO Check if trunc_fit_fd is needed in libnvmmio mmap semantic
     // trunc_fit_fd(fd);
-    long long int required_size =
+    unsigned long required_size =
         cnt + (dst - fd_table[fd_indirection[fd]].addr);
     if (required_size > fd_table[fd_indirection[fd]].current_file_size) {
-      LIBNVMMIO_DEBUG("call expand remap fd current size:%ld required size:%lld",
+      LIBNVMMIO_DEBUG("call expand remap fd current size:%ld required size:%lu",
                     fd_table[fd_indirection[fd]].current_file_size,
                     required_size);
       dst_uma = expand_remap_fd(fd, required_size);
-      dst = get_fd_addr_cur(
-          fd);  // required_size + fd_table[fd_indirection[fd]].addr;
+      dst = get_fd_addr_cur(fd);  // required_size + fd_table[fd_indirection[fd]].addr;
     }
     increase_write_count(dst_uma);
 
@@ -1556,8 +1553,8 @@ ssize_t nvwrite(int fd, const void *buf, size_t cnt) {
     fd_table[fd_indirection[fd]].off += cnt;
     off = fd_table[fd_indirection[fd]].off;
   }
-  if (off > fd_table[fd_indirection[fd]].written_file_size) {
-    fd_table[fd_indirection[fd]].written_file_size = off;
+  if ((size_t)off > fd_table[fd_indirection[fd]].written_file_size) {
+    fd_table[fd_indirection[fd]].written_file_size = (size_t)off;
   }
 
   return ret;
@@ -1649,7 +1646,7 @@ ssize_t nvpwrite(int fd, const void *buf, size_t cnt, off_t offset) {
   ssize_t ret = pwriteToMap(fd, buf, cnt, get_fd_addr_set(fd, offset));
 
   off_t written_size = offset + cnt;
-  if (written_size > fd_table[fd_indirection[fd]].written_file_size) {
+  if ((size_t)written_size > fd_table[fd_indirection[fd]].written_file_size) {
     fd_table[fd_indirection[fd]].written_file_size = written_size;
   }
 
@@ -1830,8 +1827,7 @@ int nvfstat(int fd, struct stat *statbuf) {
   statbuf->st_size = fd_table[fd_indirection[fd]].written_file_size;
   return ret;
 }
-int nvsync_file_range(int fd, off64_t offset, off64_t nbytes,
-                      unsigned int flags) {
+int nvsync_file_range(int fd, off64_t offset, off64_t nbytes) {
   trunc_fit_fd(fd);
   LIBNVMMIO_DEBUG("addr:%ld, len:%ld", (long int)fd_table[fd].addr,
          fd_table[fd].written_file_size);
@@ -1844,7 +1840,7 @@ int nvfallocate(int fd, int mode, off_t offset, off_t len) {
   size_t current_file_size = fd_table[fd_indirection[fd]].current_file_size;
   LIBNVMMIO_DEBUG("");
 
-  if (current_file_size < required_len) {
+  if (current_file_size < (size_t)required_len) {
     int ret = fallocate(fd, mode, offset, len);
     if (ret < 0)
       return ret;

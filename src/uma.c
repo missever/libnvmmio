@@ -85,7 +85,6 @@ static inline uma_t *find_uma_rbtree(const void *addr) {
     handle_error("pthread_rwlock_unlock");
   }
 
-find_uma_rbtree_fail:
   return NULL;
 
 find_uma_rbtree_success:
@@ -140,9 +139,8 @@ void insert_uma_rbtree(uma_t *new_uma) {
 }
 
 void insert_uma_syncthreads(uma_t *new_uma) {
-  int index, s;
+  int s;
 
-  // index = new_uma->id % NR_SYNC_THREADS;
   LIBNVMMIO_DEBUG("uma id = %d", new_uma->id);
 
   s = pthread_rwlock_wrlock(&uma_list.rwlock);
@@ -180,10 +178,7 @@ void delete_uma_rbtree(uma_t *uma) {
 }
 
 void delete_uma_syncthreads(uma_t *uma) {
-  int index, s;
-
-  // index = uma->id % NR_SYNC_THREADS;
-  // printf("[%s] id = %d\n", __func__, index);
+  int s;
 
   s = pthread_rwlock_wrlock(&uma_list.rwlock);
   if (__glibc_unlikely(s != 0)) {
