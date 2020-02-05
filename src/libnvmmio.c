@@ -453,9 +453,9 @@ static void nvmemcpy_read_redo(void *dest, const void *src,
   log_entry_t *entry;
   void *req_start, *req_end, *log_start, *log_end, *overwrite_dest;
   unsigned long req_addr, req_offset, req_len, overwrite_len;
-  unsigned long next_page_addr, next_len, next_table_addr, next_table_len, n;
+  unsigned long next_page_addr, next_len, next_table_addr, next_table_len;
   unsigned long index;
-  int s;
+  int s, n;
   log_size_t log_size;
 
   LIBNVMMIO_INIT_TIME(nvmemcpy_read_redo_time);
@@ -486,7 +486,7 @@ static void nvmemcpy_read_redo(void *dest, const void *src,
         if (pthread_rwlock_tryrdlock(entry->rwlockp) != 0)
           goto nvmemcpy_read_get_entry;
 
-        if (next_len >= n)
+        if ((int)next_len >= n)
           req_len = n;
         else
           req_len = next_len;
@@ -567,9 +567,9 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
   void *log_start, *log_end;
   void *prev_log_start, *prev_log_end;
   size_t next_len, req_len, overwrite_len;
-  unsigned long index, n;
+  unsigned long index;
   log_size_t log_size;
-  int s;
+  int s, n;
 
   LIBNVMMIO_INIT_TIME(nvmemcpy_write_time);
   LIBNVMMIO_START_TIME(nvmemcpy_write_t, nvmemcpy_write_time);
@@ -584,7 +584,7 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
 
   destination = dst;
   source = src;
-  n = (unsigned long)record_size;
+  n = (int)record_size;
   req_addr = (unsigned long)dst;
 
   table = get_log_table(req_addr);
@@ -634,7 +634,7 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
     log_start = entry->data + req_offset;
     next_len = next_page_addr - req_addr;
 
-    if (next_len > n)
+    if ((int)next_len > n)
       req_len = n;
     else
       req_len = next_len;
@@ -695,7 +695,7 @@ static void nvmemcpy_write(void *dst, const void *src, size_t record_size,
 
     req_addr = next_page_addr;
     src += next_len;
-    n -= next_len;
+    n -= (int)next_len;
     index += 1;
     if (index == PTRS_PER_TABLE && n > 0) {
       table = get_next_table2(table, TABLE);
