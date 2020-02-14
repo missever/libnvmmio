@@ -1,0 +1,81 @@
+diff --git a/Makefile b/Makefile
+index 027b62bc..ffca00af 100644
+--- a/Makefile
++++ b/Makefile
+@@ -22,8 +22,8 @@ endif
+ DEBUGFLAGS = -DFIO_INC_DEBUG
+ CPPFLAGS= -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -DFIO_INTERNAL $(DEBUGFLAGS)
+ OPTFLAGS= -g -ffast-math
+-CFLAGS	= -std=gnu99 -Wwrite-strings -Wall -Wdeclaration-after-statement $(OPTFLAGS) $(EXTFLAGS) $(BUILD_CFLAGS) -I. -I$(SRCDIR)
+-LIBS	+= -lm $(EXTLIBS)
++CFLAGS	= -std=gnu99 -Wwrite-strings -Wall -Wdeclaration-after-statement $(OPTFLAGS) $(EXTFLAGS) $(BUILD_CFLAGS) -I. -I$(SRCDIR) -I../../include
++LIBS	+= -lm $(EXTLIBS) -L../../src -lnvmmio
+ PROGS	= fio
+ SCRIPTS = $(addprefix $(SRCDIR)/,tools/fio_generate_plots tools/plot/fio2gnuplot tools/genfio tools/fiologparser.py tools/hist/fiologparser_hist.py tools/fio_jsonplus_clat2csv)
+ 
+diff --git a/engines/sync.c b/engines/sync.c
+index 65fd210c..309eeb2a 100644
+--- a/engines/sync.c
++++ b/engines/sync.c
+@@ -10,6 +10,7 @@
+ #include <unistd.h>
+ #include <sys/uio.h>
+ #include <errno.h>
++#include <libnvmmio.h>
+ 
+ #include "../fio.h"
+ #include "../optgroup.h"
+diff --git a/filesetup.c b/filesetup.c
+index b45a5826..1d764c81 100644
+--- a/filesetup.c
++++ b/filesetup.c
+@@ -5,6 +5,7 @@
+ #include <dirent.h>
+ #include <libgen.h>
+ #include <sys/stat.h>
++#include <libnvmmio.h>
+ 
+ #include "fio.h"
+ #include "smalloc.h"
+@@ -600,7 +601,7 @@ int file_lookup_open(struct fio_file *f, int flags)
+ 	flags |= _O_BINARY;
+ #endif
+ 
+-	f->fd = open(f->file_name, flags, 0600);
++	f->fd = open(f->file_name, flags | O_ATOMIC, 0600);
+ 	return from_hash;
+ }
+ 
+diff --git a/fio.c b/fio.c
+index f19db1be..a472fe95 100644
+--- a/fio.c
++++ b/fio.c
+@@ -21,6 +21,7 @@
+  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  *
+  */
++#include <libnvmmio.h>
+ #include "fio.h"
+ 
+ int main(int argc, char *argv[], char *envp[])
+@@ -32,6 +33,8 @@ int main(int argc, char *argv[], char *envp[])
+ 	if (initialize_fio(envp))
+ 		return 1;
+ 
++	init_libnvmmio();
++
+ #if !defined(CONFIG_GETTIMEOFDAY) && !defined(CONFIG_CLOCK_GETTIME)
+ #error "No available clock source!"
+ #endif
+diff --git a/io_u.c b/io_u.c
+index bcb893c5..1742e349 100644
+--- a/io_u.c
++++ b/io_u.c
+@@ -1,6 +1,7 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <assert.h>
++#include <libnvmmio.h>
+ 
+ #include "fio.h"
+ #include "verify.h"
