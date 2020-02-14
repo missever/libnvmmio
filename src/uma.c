@@ -138,6 +138,7 @@ void insert_uma_rbtree(uma_t *new_uma) {
   }
 }
 
+/*
 void insert_uma_syncthreads(uma_t *new_uma) {
   int s;
 
@@ -155,6 +156,7 @@ void insert_uma_syncthreads(uma_t *new_uma) {
     handle_error("pthread_rwlock_unlock");
   }
 }
+*/
 
 void insert_uma_fdarray(int fd, uma_t *new_uma) { uma_fdarray[fd] = new_uma; }
 
@@ -239,4 +241,36 @@ void init_uma(void) {
   for (i = 0; i < MAX_NR_UMAS; i++) {
     uma_fdarray[i] = NULL;
   }
+}
+
+inline void increase_uma_read_cnt(uma_t *uma) {
+  int old, new;
+
+  LIBNVMMIO_INIT_TIME(increase_uma_read_cnt_time);
+  LIBNVMMIO_START_TIME(increase_uma_read_cnt_t, increase_uma_read_cnt_time);
+
+  /* TODO: It is necessary to check whether the counter does not exceed the
+   * ULONG_MAX */
+  do {
+    old = uma->read;
+    new = old + 1;
+  } while (!__sync_bool_compare_and_swap(&uma->read, old, new));
+
+  LIBNVMMIO_END_TIME(increase_uma_read_cnt_t, increase_uma_read_cnt_time);
+}
+
+inline void increase_uma_write_cnt(uma_t *uma) {
+  int old, new;
+
+  LIBNVMMIO_INIT_TIME(increase_uma_write_cnt_time);
+  LIBNVMMIO_START_TIME(increase_uma_write_cnt_t, increase_uma_write_cnt_time);
+
+  /* TODO: It is necessary to check whether the counter does not exceed the
+   * ULONG_MAX */
+  do {
+    old = uma->write;
+    new = old + 1;
+  } while (!__sync_bool_compare_and_swap(&uma->write, old, new));
+
+  LIBNVMMIO_END_TIME(increase_uma_write_cnt_t, increase_uma_write_cnt_time);
 }

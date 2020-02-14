@@ -3,7 +3,7 @@ OBJECTS = $(patsubst %.c, %.o, $(wildcard *.c))
 TARGET = seqwrite
 LIBS = -lnvmmio -lpthread -lpmem
 LIBPATH = -L../../src
-INCLUDE = -I../../src
+INCLUDE = -I../../include
 CFLAGS = -g $(INCLUDE)
 
 $(TARGET):$(OBJECTS)

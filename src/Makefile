@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -W -Wall -g
+CFLAGS = -W -Wall -O3
 OBJECTS = $(patsubst %.c, %.o, $(wildcard *.c))
 TARGET = libnvmmio.a
 

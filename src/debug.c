@@ -12,10 +12,10 @@ const char *func_name[NR_FUNCS] = {
     "nvmemcpy_write",
     "fsync",
     "check_log",
-    "nvmemcpy_memcpy",
+    "nvmmio_memcpy",
     "get_fd_uma",
-    "increase_write_count",
-    "increase_read_count",
+    "increase_uma_write_cnt",
+    "increase_uma_read_cnt",
     "nvmmio_fence",
     "nvmmio_write",
     "nvmmio_flush",
@@ -29,7 +29,9 @@ static int get_nrcpus(void) {
   long ret;
 
   ret = sysconf(_SC_NPROCESSORS_ONLN);
-  if (ret < 0) handle_error("sysconf");
+  if (ret < 0) {
+		handle_error("sysconf");
+	}
   return (int)ret;
 }
 
@@ -39,22 +41,30 @@ void init_timer(void) {
 
   timestats_percpu = malloc(sizeof(struct timespec *) * NR_FUNCS);
 
-  if (timestats_percpu == NULL) handle_error("malloc");
+  if (timestats_percpu == NULL) {
+		handle_error("malloc");
+	}
 
   for (i = 0; i < NR_FUNCS; i++) {
     timestats_percpu[i] = calloc(nrcpus, sizeof(struct timespec));
 
-    if (timestats_percpu[i] == NULL) handle_error("calloc");
+    if (timestats_percpu[i] == NULL) {
+			handle_error("calloc");
+		}
   }
 
   countstats_percpu = malloc(sizeof(unsigned int *) * NR_FUNCS);
 
-  if (countstats_percpu == NULL) handle_error("malloc");
+  if (countstats_percpu == NULL) {
+		handle_error("malloc");
+	}
 
   for (i = 0; i < NR_FUNCS; i++) {
     countstats_percpu[i] = calloc(nrcpus, sizeof(unsigned int));
 
-    if (countstats_percpu[i] == NULL) handle_error("calloc");
+    if (countstats_percpu[i] == NULL) {
+			handle_error("calloc");
+		}
   }
 }
 

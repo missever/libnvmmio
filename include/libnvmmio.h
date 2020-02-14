@@ -1,5 +1,5 @@
-#ifndef _LIBNVMMIO_IO_H
-#define _LIBNVMMIO_IO_H
+#ifndef _LIBNVMMIO_H
+#define _LIBNVMMIO_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -7,9 +7,9 @@ extern "C" {
 
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include "../src/nvrw.h"
 
-#define O_ATOMIC 01000000000
-
+extern void init_libnvmmio(void);
 extern int nvunlink(const char *pathname);
 
 #define creat(filename, mode) nvcreat(filename, mode)
@@ -84,7 +84,7 @@ extern int nvfstat(int fd, struct stat *statbuf);
 // off64_t nbytes, unsigned int flags);
 #define fallocate(fd, mode, offset, len) nvfallocate(fd, mode, offset, len)
 extern int nvfallocate(int fd, int mode, off_t offset, off_t len);
-#define posix_fallocate(fd, offset, len) nvposix_fallocate(fd, offset, len)
+//#define posix_fallocate(fd, offset, len) nvposix_fallocate(fd, offset, len)
 extern int nvposix_fallocate(int fd, off_t offset, off_t len);
 #define pread64(fd, buf, count, offset) nvpread64(fd, buf, count, offset)
 extern ssize_t nvpread64(int fd, void *buf, size_t cnt, off_t offset);
@@ -101,4 +101,4 @@ extern nvlstat();
 }
 #endif  // __cplusplus
 
-#endif  // _LIBNVMMIO_IO_H
+#endif  // _LIBNVMMIO_H

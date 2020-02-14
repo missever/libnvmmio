@@ -8,10 +8,16 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <stdbool.h>
 
 #include "allocator.h"
 #include "internal.h"
 #include "debug.h"
+
+#define DIR_PATH "%s/.libnvmmio-%lu"
+#define DATA_PATH "%s/.libnvmmio-%lu/data-%d.log"
+#define ENTRIES_PATH "%s/.libnvmmio-%lu/entries.log"
+#define UMAS_PATH "%s/.libnvmmio-%lu/umas.log"
 
 typedef struct freelist_struct {
   list_node_t *head;
@@ -22,7 +28,7 @@ typedef struct freelist_struct {
 static pthread_t background_table_alloc_thread;
 static pthread_cond_t background_table_alloc_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t background_table_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
-static volatile int background_table_alloc = FALSE;
+static volatile int background_table_alloc = false;
 
 static freelist_t *global_tables_list = NULL;
 static freelist_t *global_entries_list = NULL;
@@ -229,13 +235,13 @@ static void *background_table_alloc_thread_func(__attribute__((unused))void *par
   int s;
   LIBNVMMIO_DEBUG("table_alloc_thread start on %d", sched_getcpu());
 
-  while (TRUE) {
+  while (true) {
     s = pthread_mutex_lock(&background_table_alloc_mutex);
     if (__glibc_unlikely(s != 0)) {
       handle_error("pthread_mutex_lock");
     }
 
-    while (background_table_alloc == FALSE) {
+    while (background_table_alloc == false) {
       s = pthread_cond_wait(&background_table_alloc_cond,
                             &background_table_alloc_mutex);
       if (__glibc_unlikely(s != 0)) {
@@ -243,8 +249,8 @@ static void *background_table_alloc_thread_func(__attribute__((unused))void *par
       }
     }
     LIBNVMMIO_DEBUG("wake up!!");
-    fill_global_tables_list(TRUE);
-    background_table_alloc = FALSE;
+    fill_global_tables_list(true);
+    background_table_alloc = false;
 
     s = pthread_mutex_unlock(&background_table_alloc_mutex);
     if (__glibc_unlikely(s != 0)) {
@@ -401,7 +407,7 @@ static void fill_local_tables_list(void) {
   count = global_tables_list->count;
 
   if (count == 0) {
-    fill_global_tables_list(FALSE);
+    fill_global_tables_list(false);
     count = global_tables_list->count;
   }
 
@@ -427,7 +433,7 @@ static void fill_local_tables_list(void) {
       handle_error("pthread_mutex_lock");
     }
 
-    background_table_alloc = TRUE;
+    background_table_alloc = true;
 
     s = pthread_mutex_unlock(&background_table_alloc_mutex);
     if (__glibc_unlikely(s != 0)) {

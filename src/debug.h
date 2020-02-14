@@ -11,10 +11,10 @@ enum time_category {
   nvmemcpy_write_t,
   fsync_t,
   check_log_t,
-  nvmemcpy_memcpy_t,
+  nvmmio_memcpy_t,
   get_fd_uma_t,
-  increase_write_count_t,
-  increase_read_count_t,
+  increase_uma_write_cnt_t,
+  increase_uma_read_cnt_t,
   nvmmio_fence_t,
   nvmmio_write_t,
   nvmmio_flush_t,
@@ -27,6 +27,19 @@ enum time_category {
 
 struct timespec **timestats_percpu;
 unsigned int **countstats_percpu;
+
+#define handle_error(msg) \
+  do { \
+    perror(msg); \
+    exit(EXIT_FAILURE); \
+  } while (0)
+
+#define handle_error_en(en, msg) \
+  do { \
+    errno = en; \
+    perror(msg); \
+    exit(EXIT_FAILURE); \
+  } while (0)
 
 #ifdef _LIBNVMMIO_DEBUG
 #define LIBNVMMIO_DEBUG(fmt, ...) \

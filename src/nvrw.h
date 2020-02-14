@@ -1,0 +1,6 @@
+#ifndef _LIBNVMMIO_NVRW_H
+#define _LIBNVMMIO_NVRW_H
+
+#define O_ATOMIC 01000000000
+
+#endif /* _LIBNVMMIO_NVRW_H */
